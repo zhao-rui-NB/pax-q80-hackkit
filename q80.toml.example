@@ -1,0 +1,11 @@
+[device]
+host = "192.168.1.195"
+telnet_port = 2323
+serial = "com:COM12"
+timeout = 20
+
+[tools]
+xcb = "vendor/xcb.exe"
+# Optional override; by default, build uses arm-linux-gnueabi-gcc from PATH.
+# compiler = "C:/path/to/arm-linux-gnueabi-gcc.exe"
+

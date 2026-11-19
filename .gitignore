@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+backups/
+q80.toml
+*.aip
+*.raw
+*.png
+wifi_passwd.txt
+*.log
+.q80-root.lock
+vendor/libosal-original.so
