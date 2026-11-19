@@ -7,7 +7,7 @@ import tempfile
 from q80 import build
 from q80.config import ROOT
 from q80.log import success
-from q80.system.root import Root
+from q80.system import aip_root
 from q80.transport.session import Session
 
 
@@ -28,8 +28,8 @@ def install(session: Session) -> str:
             (hook, "/tmp/q80_boot_hook.so"),
             (rendered, "/tmp/q80_boot_runtime.sh"),
         ]
-        result = Root(session).run((preload_dir / "install.sh").read_bytes(),
-                                   files=tuple(files), timeout=90)
+        result = aip_root.run(session, (preload_dir / "install.sh").read_bytes(),
+                              files=tuple(files), timeout=90)
     if "PRELOAD_INSTALLED" not in result:
         raise RuntimeError("Preload install script did not confirm success")
     success(log, "Boot hook installed; reboot, then run preload status")
@@ -39,6 +39,6 @@ def install(session: Session) -> str:
 def restore(session: Session) -> str:
     log.info("Restore prior boot settings")
     script = ROOT / "device" / "preload" / "restore.sh"
-    result = Root(session).run(script.read_bytes(), timeout=90)
+    result = aip_root.run(session, script.read_bytes(), timeout=90)
     success(log, "Prior boot settings restored")
     return result

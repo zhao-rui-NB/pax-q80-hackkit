@@ -76,7 +76,7 @@ Wi-Fi 設定使用 Q80 原廠 UI；研究與實機測試確認其設定可在重
 ## 程式邊界
 
 - `q80/transport/` 管理 Telnet 和 XCB；功能模組從 `Session` 取得連線。
-- `q80/system/` 放暫時 root 通道、PED 與 preload。
+- `q80/system/aip_root.py` 集中處理暫時 root 通道的啟動、命令執行、停止及 SO 備份還原；同目錄也有 PED 與 preload 流程。
 - `q80/aip.py` 只建立與檢查 ZIP 格式，不處理連線。
 - `q80/installer.py` 組合 AIP 與 XCB 安裝流程。
 - `device/apps/<name>/` 放每個 app 的 `app.toml` 和 C 原始碼。
@@ -90,7 +90,8 @@ Wi-Fi 設定使用 Q80 原廠 UI；研究與實機測試確認其設定可在重
 安裝會保存上一版 hook 與 preload，`preload restore`
 只在有本專案建立的備份標記時執行。
 `aip-root start` 會暫時替換 `/usr/lib/libosal.so` 以啟動 root 命令程序；
-替換前會先將這台裝置的原廠庫備份到本機 `backups/`，程序啟動後立即還原並核對雜湊。
+替換前會先將裝置目前的庫存到本機 `backups/libosal.so`，程序啟動後立即用這份檔案還原。
+每次執行 `start` 都會覆寫這份備份；若要保留舊版本，請先自行複製。
 若 `start` 中途失敗，程式也會嘗試還原原廠庫；若還原失敗，錯誤訊息會指出本機備份路徑並提示重新開機。
 即使網路 Telnet 已可用，`start` 仍明確建立 XCB root 通道。`aip-root stop` 會關閉此通道；
 重新開機後命令程序也不再存在。要再次使用時，重新執行 `aip-root start`。
@@ -102,10 +103,10 @@ Wi-Fi 設定使用 Q80 原廠 UI；研究與實機測試確認其設定可在重
 
 `start` 的各個階段如下；本機臨時目錄在命令結束時由 Python 刪除，`backups/` 與建置輸出會保留。
 
-1. **備份與建置：**本機編譯 `device/aip_root/root_cmd.c` 為 `build/support/libosal_root_cmd.so`。XCB 從裝置 `/usr/lib/libosal.so` 下載原廠庫，存為本機 `backups/libosal-<SHA-256>.so`，並將檔名記在 `backups/active.txt`。替換前會檢查 ELF 標頭及 `OsSleep` 字串。
+1. **備份與建置：**本機編譯 `device/aip_root/root_cmd.c` 為 `build/support/libosal_root_cmd.so`。XCB 從裝置 `/usr/lib/libosal.so` 下載目前的庫，直接存為本機 `backups/libosal.so`；下一次 `start` 會覆寫它。
 2. **安裝暫時入口：**本機暫存 `busybox.aip` 與 `root_cmd.aip`。前者的 `probe` 符號連結指向裝置 `/bin`，套件內有 `probe/busybox` 與 `probe/sh`；後者的 `manifest.xml` 符號連結指向 `/usr/lib`，套件內有 `manifest.xml/libosal.so`。XCB 呼叫 `installer aip` 後，依套件路徑將 BusyBox 放在 `/bin/busybox`，並暫時以 root loader 取代 `/usr/lib/libosal.so`。
 3. **啟動常駐程序：**XCB 上傳 `device/aip_root/daemon.sh` 到 `/tmp/q80_root_daemon.sh`，再建立 `/tmp/q80_root_spawn` 並呼叫 installer 處理空 AIP。loader 的 constructor 刪除舊就緒檔並建立獨立程序。程序將自己的 PID 寫到 `/tmp/q80_root_ready`，電腦確認該檔案出現。
-4. **立即還原原廠庫：**XCB 將本機備份上傳到 `/tmp/q80_libosal_stock.so`。常駐程序透過下述 `exec` 檔案通道執行還原腳本，先寫 `/usr/lib/libosal.so.new`，設定模式為 `755`，再移到 `/usr/lib/libosal.so`。電腦重新下載並比對 SHA-256。最後嘗試用 `installer uaip` 移除兩個暫時 AIP 的登錄資料。
+4. **立即還原原廠庫：**XCB 將本機備份上傳到 `/tmp/q80_libosal_stock.so`。常駐程序透過下述 `exec` 檔案通道執行還原腳本，先寫 `/usr/lib/libosal.so.new`，設定模式為 `755`，再移到 `/usr/lib/libosal.so`。最後嘗試用 `installer uaip` 移除兩個暫時 AIP 的登錄資料。
 
 後續每次 `exec` 都只走 XCB：電腦上傳 `/tmp/q80_task_<代號>.sh`，再依序上傳含代號的 `/tmp/q80_root_request` 及 `/tmp/q80_root_go`。常駐程序看到觸發檔後執行腳本，把標準輸出與錯誤合併寫入 `/tmp/q80_output_<代號>`，刪除本次腳本和請求檔，最後把退出碼寫入 `/tmp/q80_status_<代號>`。電腦以狀態檔判定完成並下載輸出。每次代號不同；電腦端的 `.q80-root.lock` 防止多個命令同時覆蓋請求檔。`exec` 不再呼叫 installer。
 
@@ -161,6 +162,7 @@ PED bypass 的新版流程仍待單獨重新驗證。
 
 - 安裝不含 Wi-Fi 設定的新版 `preload` 後重開機，Q80 原廠 Wi-Fi 自動取得 DHCP 位址，root Telnet 自動可用。
 - 移除自動切換路徑後，`aip-root start`、`preload install` 與原廠庫還原流程已在實機只經 XCB／AIP 執行成功；原廠 `libosal.so` 已還原並驗證。`ped bypass` 本次只做離線驗證。
-- 常駐命令程序版本的 `aip-root start` 已在實機完整執行：啟動程序後自動還原原廠 `libosal.so` 並核對雜湊；後續 `aip-root exec id -u` 經 XCB 回傳 `0`，不再觸發 installer。非零退出碼 `7` 正確回報；原廠庫還原後 root 命令仍可使用。
+- 常駐命令程序版本的 `aip-root start` 已在實機完整執行：啟動程序後自動還原原廠 `libosal.so`；後續 `aip-root exec id -u` 經 XCB 回傳 `0`，不再觸發 installer。非零退出碼 `7` 正確回報；原廠庫還原後 root 命令仍可使用。當時的版本有做雜湊核對，現版本已移除。
 - `aip-root stop` 已在實機驗證：就緒檔與常駐程序消失，隨後的 `aip-root exec` 立即回報需要重新執行 `start`。
 - 實機觀察到未掛載的 `/proc` 令 `ps` 只印出表頭；手動掛載 procfs 後，`ps` 正常列出系統與 root daemon 程序。移除 loader 命令通道後的精簡版 `start` 也已在實機完成自動還原與命令執行。
+- 固定備份檔版本已在實機執行成功：`start` 寫入 `backups/libosal.so` 並完成還原，後續 `aip-root exec "id -u"` 回傳 `0`。

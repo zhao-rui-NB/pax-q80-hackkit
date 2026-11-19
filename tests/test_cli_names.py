@@ -11,10 +11,10 @@ class CliNamesTest(unittest.TestCase):
     def test_aip_root_exec_displays_output(self):
         session = Mock()
         output = io.StringIO()
-        with patch("q80.cli.Root") as root, contextlib.redirect_stdout(output):
-            root.return_value.run.return_value = "uid=0(root)\n"
+        with patch("q80.cli.aip_root.run", return_value="uid=0(root)\n") as run, \
+             contextlib.redirect_stdout(output):
             execute(["aip-root", "exec", "id"], session)
-        root.return_value.run.assert_called_once_with("id")
+        run.assert_called_once_with(session, "id")
         self.assertEqual(output.getvalue(), "uid=0(root)\n")
 
     def test_named_entry_points(self):

@@ -14,7 +14,6 @@ from q80 import aip, app_manifest, apps, build, diagnostics, installer
 from q80.config import ROOT, load
 from q80.log import configure, report_error, success
 from q80.system import aip_root, ped, preload
-from q80.system.root import Root
 from q80.transport.session import Session
 from q80.transport.xcb import format_entry
 
@@ -205,7 +204,7 @@ def execute(words: list[str], session: Session | None) -> int | None:
         return result.code
     if words[:2] == ["aip-root", "exec"] and len(words) > 2 and words[2] not in ("-h", "--help"):
         session = _device_session(session)
-        print(Root(session).run(" ".join(words[2:])), end="")
+        print(aip_root.run(session, " ".join(words[2:])), end="")
         return 0
 
     try:

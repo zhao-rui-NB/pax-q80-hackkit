@@ -1,8 +1,9 @@
-"""Temporary root commands triggered by AIP over XCB."""
+"""Start a temporary root daemon and run commands through XCB."""
 
+from contextlib import contextmanager
 import logging
+import os
 from pathlib import Path
-import hashlib
 import tempfile
 import time
 import uuid
@@ -10,7 +11,6 @@ import uuid
 from q80 import aip, build, installer
 from q80.config import ROOT
 from q80.log import success
-from q80.system.root import Root
 from q80.transport.session import Session
 
 
@@ -18,44 +18,91 @@ BACKUPS = ROOT / "backups"
 log = logging.getLogger(__name__)
 
 
-def _is_stock_library(content: bytes) -> bool:
-    return content.startswith(b"\x7fELF") and b"OsSleep" in content
+@contextmanager
+def _command_lock():
+    path = ROOT / ".q80-root.lock"
+    with path.open("a+b") as lock:
+        if lock.seek(0, os.SEEK_END) == 0:
+            lock.write(b"\0")
+            lock.flush()
+        lock.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def run(session: Session, script: bytes | str, *,
+        files: tuple[tuple[Path, str], ...] = (), timeout: float = 90,
+        connected: bool = False) -> str:
+    """Send a script to the root daemon and read its result through XCB."""
+    if isinstance(script, str):
+        script = script.encode("utf-8")
+    token = uuid.uuid4().hex[:12]
+    task = f"/tmp/q80_task_{token}.sh"
+    status = f"/tmp/q80_status_{token}"
+    output = f"/tmp/q80_output_{token}"
+    with _command_lock(), tempfile.TemporaryDirectory(prefix="q80-root-") as temporary:
+        log.info("Run root script via XCB")
+        temp = Path(temporary)
+        xcb = session.xcb
+        if not connected:
+            xcb.connect()
+        try:
+            xcb.stat("/tmp/q80_root_ready")
+        except FileNotFoundError as exc:
+            raise RuntimeError("Root daemon is not ready; run aip-root start first") from exc
+        for local, remote in files:
+            xcb.push(local, remote)
+        local_task = temp / "task.sh"
+        local_task.write_bytes(script if script.endswith(b"\n") else script + b"\n")
+        xcb.push(local_task, task)
+        request = temp / "request"
+        request.write_bytes(token.encode("ascii") + b"\n")
+        trigger = temp / "trigger"
+        trigger.write_bytes(b"go\n")
+        xcb.push(request, "/tmp/q80_root_request")
+        xcb.push(trigger, "/tmp/q80_root_go")
+        result = temp / "result"
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                xcb.pull(status, result)
+                break
+            except (FileNotFoundError, RuntimeError) as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Root daemon did not return a result") from exc
+                time.sleep(0.5)
+        code = int(result.read_text(encoding="ascii").strip())
+        captured = temp / "output"
+        xcb.pull(output, captured)
+        text = captured.read_text(encoding="utf-8", errors="replace")
+        if code:
+            raise RuntimeError(f"Root command exited with {code}\n{text}")
+        success(log, "Root script complete")
+        return text
 
 
 def backup_current_libosal(session: Session) -> Path:
     """Keep the connected device's library before replacing it."""
     session.xcb.connect()
+    BACKUPS.mkdir(exist_ok=True)
+    target = BACKUPS / "libosal.so"
     with tempfile.TemporaryDirectory(prefix="q80-stock-") as directory:
         pulled = Path(directory) / "libosal.so"
         session.xcb.pull("/usr/lib/libosal.so", pulled)
-        content = pulled.read_bytes()
-    if not _is_stock_library(content):
-        raise RuntimeError("Current libosal does not look like the stock Q80 library; refusing to back it up as stock")
-    digest = hashlib.sha256(content).hexdigest()
-    BACKUPS.mkdir(exist_ok=True)
-    target = BACKUPS / f"libosal-{digest}.so"
-    if not target.exists():
-        target.write_bytes(content)
-    elif hashlib.sha256(target.read_bytes()).hexdigest() != digest:
-        raise RuntimeError(f"Existing backup is damaged: {target}")
-    (BACKUPS / "active.txt").write_text(target.name, encoding="ascii")
+        target.write_bytes(pulled.read_bytes())
     return target
-
-
-def stock_backup() -> Path:
-    active = BACKUPS / "active.txt"
-    if not active.is_file():
-        raise FileNotFoundError("No device-specific libosal backup; run aip-root start first")
-    name = active.read_text(encoding="ascii").strip()
-    if not name.startswith("libosal-") or Path(name).name != name:
-        raise RuntimeError("Invalid active libosal backup record")
-    path = BACKUPS / name
-    if not path.is_file():
-        raise RuntimeError(f"Stock libosal backup missing or invalid: {path}")
-    content = path.read_bytes()
-    if not _is_stock_library(content) or name != f"libosal-{hashlib.sha256(content).hexdigest()}.so":
-        raise RuntimeError(f"Stock libosal backup missing or invalid: {path}")
-    return path
 
 
 def start(session: Session) -> str:
@@ -122,38 +169,22 @@ def stop(session: Session) -> str:
         message = "Root XCB command channel is already stopped."
         success(log, "%s", message)
         return message
-    Root(session).run("/bin/busybox rm -f /tmp/q80_root_ready", connected=True)
+    run(session, "/bin/busybox rm -f /tmp/q80_root_ready", connected=True)
     message = "Root XCB command channel stopped."
     success(log, "%s", message)
     return message
 
 
 def _restore_stock_libosal(session: Session) -> str:
-    original = stock_backup()
-    expected = hashlib.sha256(original.read_bytes()).hexdigest()
+    original = BACKUPS / "libosal.so"
     session.xcb.connect()
-    with tempfile.TemporaryDirectory(prefix="q80-check-") as directory:
-        current_file = Path(directory) / "current.so"
-        session.xcb.pull("/usr/lib/libosal.so", current_file)
-        current = current_file.read_bytes()
-        if hashlib.sha256(current).hexdigest() == expected:
-            message = "Stock libosal is already installed."
-            success(log, "%s", message)
-            return message
-        if _is_stock_library(current):
-            raise RuntimeError("Device has a different stock libosal; refusing to overwrite it with an unrelated backup")
     session.xcb.push(original, "/tmp/q80_libosal_stock.so")
     command = (
         "cp /tmp/q80_libosal_stock.so /usr/lib/libosal.so.new && "
         "chmod 755 /usr/lib/libosal.so.new && "
         "mv /usr/lib/libosal.so.new /usr/lib/libosal.so"
     )
-    Root(session).run(command, connected=True)
-    with tempfile.TemporaryDirectory(prefix="q80-libosal-") as directory:
-        copy = Path(directory) / "libosal.so"
-        session.xcb.pull("/usr/lib/libosal.so", copy)
-        if hashlib.sha256(copy.read_bytes()).hexdigest() != expected:
-            raise RuntimeError("Restored libosal checksum differs from the stock backup")
-    message = "Stock libosal restored and verified."
+    run(session, command, connected=True)
+    message = "Stock libosal restored."
     success(log, "%s", message)
     return message
