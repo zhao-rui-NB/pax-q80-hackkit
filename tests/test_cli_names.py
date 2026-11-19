@@ -21,7 +21,7 @@ class CliNamesTest(unittest.TestCase):
         session = Mock()
         cases = (
             (["aip-root", "start"], "q80.cli.aip_root.start"),
-            (["aip-root", "restore"], "q80.cli.aip_root.restore"),
+            (["aip-root", "stop"], "q80.cli.aip_root.stop"),
             (["preload", "install"], "q80.cli.preload.install"),
             (["preload", "restore"], "q80.cli.preload.restore"),
             (["preload", "status"], "q80.cli.diagnostics.preload_status"),
@@ -32,6 +32,10 @@ class CliNamesTest(unittest.TestCase):
                  contextlib.redirect_stdout(io.StringIO()):
                 execute(words, session)
                 action.assert_called_once_with(session)
+
+    def test_aip_root_restore_is_not_a_command(self):
+        with self.assertRaises(ValueError):
+            execute(["aip-root", "restore"], Mock())
 
     def test_help_matches_interactive_help_without_loading_config(self):
         one_shot = io.StringIO()

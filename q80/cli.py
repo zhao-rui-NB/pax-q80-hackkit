@@ -70,8 +70,8 @@ def _parser() -> _ArgumentParser:
     root = commands.add_parser("aip-root", help="temporary root access over XCB")
     root_actions = root.add_subparsers(dest="action", required=True)
     root_actions.add_parser("start", help="start temporary root access")
-    root_actions.add_parser("exec", help="run one command via AIP").add_argument("command", nargs=argparse.REMAINDER)
-    root_actions.add_parser("restore", help="restore the stock libosal.so")
+    root_actions.add_parser("exec", help="run one root command over XCB").add_argument("command", nargs=argparse.REMAINDER)
+    root_actions.add_parser("stop", help="stop the root command channel")
 
     ped_parser = commands.add_parser("ped", help="PED status and current-boot bypass")
     ped_actions = ped_parser.add_subparsers(dest="action", required=True)
@@ -270,8 +270,8 @@ def execute(words: list[str], session: Session | None) -> int | None:
     elif args.group == "aip-root":
         if args.action == "start":
             aip_root.start(session)
-        elif args.action == "restore":
-            aip_root.restore(session)
+        else:
+            aip_root.stop(session)
     elif args.group == "app":
         if args.action == "list":
             print(diagnostics.installed_apps(session), end="")

@@ -1,10 +1,11 @@
-"""Execute scripts through the temporary libosal loader when Telnet is unavailable."""
+"""Run root scripts through the XCB file service."""
 
 from contextlib import contextmanager
 import logging
 import os
 from pathlib import Path
 import tempfile
+import time
 import uuid
 
 from q80.config import ROOT
@@ -45,7 +46,7 @@ class Root:
 
     def run(self, script: bytes | str, *, files: tuple[tuple[Path, str], ...] = (),
             timeout: float = 90, connected: bool = False) -> str:
-        """Run a script and read back its output and exit status through XCB."""
+        """Send a script to the root daemon and read its result through XCB."""
         if isinstance(script, str):
             script = script.encode("utf-8")
         token = uuid.uuid4().hex[:12]
@@ -53,42 +54,36 @@ class Root:
         status = f"/tmp/q80_status_{token}"
         output = f"/tmp/q80_output_{token}"
         with _command_lock(), tempfile.TemporaryDirectory(prefix="q80-root-") as temporary:
-            log.info("Run root script via AIP")
+            log.info("Run root script via XCB")
             temp = Path(temporary)
             xcb = self.session.xcb
             if not connected:
                 xcb.connect()
-            library = temp / "libosal.so"
-            xcb.pull("/usr/lib/libosal.so", library)
-            if b"[Q80 ROOT CMD]" not in library.read_bytes():
-                raise RuntimeError("AIP root channel is not active; run aip-root start first")
+            try:
+                xcb.stat("/tmp/q80_root_ready")
+            except FileNotFoundError as exc:
+                raise RuntimeError("Root daemon is not ready; run aip-root start first") from exc
             for local, remote in files:
                 xcb.push(local, remote)
             local_task = temp / "task.sh"
             local_task.write_bytes(script if script.endswith(b"\n") else script + b"\n")
             xcb.push(local_task, task)
-            command = temp / "command"
-            command.write_text(
-                "B=/bin/busybox; [ -x \"$B\" ] || B=/usr/bin/busybox; "
-                f"\"$B\" sh {task} > {output} 2>&1; Q80_RC=$?; "
-                f"echo $Q80_RC > {status}; \"$B\" rm -f {task}\n",
-                encoding="ascii",
-            )
+            request = temp / "request"
+            request.write_bytes(token.encode("ascii") + b"\n")
             trigger = temp / "trigger"
             trigger.write_bytes(b"go\n")
-            empty = temp / "trigger.aip"
-            empty.touch()
-            xcb.push(command, "/tmp/q80_cmd")
-            xcb.push(trigger, "/tmp/q80_go")
-            # The empty AIP starts installer; the constructor handles the script.
-            xcb.device_command("installer", "aip", str(empty), check=False, timeout=timeout)
+            xcb.push(request, "/tmp/q80_root_request")
+            xcb.push(trigger, "/tmp/q80_root_go")
             result = temp / "result"
-            try:
-                xcb.pull(status, result)
-            except (FileNotFoundError, RuntimeError) as exc:
-                raise RuntimeError(
-                    f"AIP root command did not produce a result file: {exc}"
-                ) from exc
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    xcb.pull(status, result)
+                    break
+                except (FileNotFoundError, RuntimeError) as exc:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Root daemon did not return a result") from exc
+                    time.sleep(0.5)
             code = int(result.read_text(encoding="ascii").strip())
             captured = temp / "output"
             xcb.pull(output, captured)

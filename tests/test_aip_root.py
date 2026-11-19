@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from q80.system.aip_root import start, backup_current_libosal, restore
+from q80.system.aip_root import start, stop, backup_current_libosal, _restore_stock_libosal
 
 
 class AipRootTest(unittest.TestCase):
@@ -21,11 +21,14 @@ class AipRootTest(unittest.TestCase):
                  patch("q80.system.aip_root.aip.pack_busybox", return_value=root / "busybox.aip"), \
                  patch("q80.system.aip_root.aip.pack_root_loader", return_value=root / "loader.aip"), \
                  patch("q80.system.aip_root.installer.install") as install, \
+                 patch("q80.system.aip_root._restore_stock_libosal") as restore_stock, \
                  patch("q80.system.aip_root.Root") as root_command:
-                root_command.return_value.run.return_value = "AIP_ROOT_OK\n"
                 start(session)
         session.telnet.run.assert_not_called()
         self.assertEqual(install.call_count, 2)
+        root_command.assert_not_called()
+        self.assertEqual(session.xcb.device_command.call_args_list[0].args[:2], ("installer", "aip"))
+        restore_stock.assert_called_once_with(session)
 
     def test_backup_uses_connected_device_library(self):
         with TemporaryDirectory() as temp, patch("q80.system.aip_root.BACKUPS", Path(temp)):
@@ -34,6 +37,39 @@ class AipRootTest(unittest.TestCase):
             path = backup_current_libosal(session)
             self.assertEqual(path.read_bytes(), b"\x7fELFstock OsSleep")
             self.assertEqual((Path(temp) / "active.txt").read_text(), path.name)
+
+    def test_stop_disables_the_daemon_channel(self):
+        session = Mock()
+        with patch("q80.system.aip_root.Root") as root_command:
+            stop(session)
+        root_command.return_value.run.assert_called_once_with(
+            "/bin/busybox rm -f /tmp/q80_root_ready", connected=True
+        )
+
+    def test_stop_is_safe_when_already_stopped(self):
+        session = Mock()
+        session.xcb.stat.side_effect = FileNotFoundError("ready")
+        with patch("q80.system.aip_root.Root") as root_command:
+            self.assertIn("already stopped", stop(session))
+        root_command.assert_not_called()
+
+    def test_start_restores_stock_when_install_fails(self):
+        session = Mock()
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            busybox = root / "vendor" / "busybox-arm"
+            busybox.parent.mkdir()
+            busybox.touch()
+            with patch("q80.system.aip_root.ROOT", root), \
+                 patch("q80.system.aip_root.build.build_support", return_value=root / "loader.so"), \
+                 patch("q80.system.aip_root.backup_current_libosal", return_value=root / "stock.so"), \
+                 patch("q80.system.aip_root.aip.pack_busybox", return_value=root / "busybox.aip"), \
+                 patch("q80.system.aip_root.aip.pack_root_loader", return_value=root / "loader.aip"), \
+                 patch("q80.system.aip_root.installer.install", side_effect=RuntimeError("install failed")), \
+                 patch("q80.system.aip_root._restore_stock_libosal") as restore_stock:
+                with self.assertRaisesRegex(RuntimeError, "Stock libosal is restored"):
+                    start(session)
+        restore_stock.assert_called_once_with(session)
 
     def test_restore_refuses_another_stock_library(self):
         with TemporaryDirectory() as temp, patch("q80.system.aip_root.BACKUPS", Path(temp)):
@@ -44,7 +80,7 @@ class AipRootTest(unittest.TestCase):
             session = Mock()
             session.xcb.pull.side_effect = lambda remote, local: local.write_bytes(b"\x7fELFstock B OsSleep")
             with self.assertRaisesRegex(RuntimeError, "different stock libosal"):
-                restore(session)
+                _restore_stock_libosal(session)
             session.telnet.run.assert_not_called()
             session.xcb.push.assert_not_called()
 
@@ -57,6 +93,6 @@ class AipRootTest(unittest.TestCase):
             (Path(temp) / "active.txt").write_text(backup.name)
             session = Mock()
             session.xcb.pull.side_effect = lambda remote, local: local.write_bytes(original)
-            self.assertIn("already installed", restore(session))
+            self.assertIn("already installed", _restore_stock_libosal(session))
             session.telnet.run.assert_not_called()
             session.xcb.push.assert_not_called()

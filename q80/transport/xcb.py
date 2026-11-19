@@ -188,7 +188,7 @@ class Xcb:
                     raise
 
     def push(self, local: Path, remote: str, mode: int = statmod.S_IFREG | 0o666) -> None:
-        log.info("Push %s", remote)
+        log.debug("Push %s", remote)
         with self._file_socket() as sock:
             _request(sock, b"STAT", remote)
             if _read(sock, 4) != b"STAT":

@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import hashlib
 import tempfile
+import time
 import uuid
 
 from q80 import aip, build, installer
@@ -74,24 +75,60 @@ def start(session: Session) -> str:
         try:
             installer.install(session, busybox_aip, connected=True)
             installer.install(session, loader_aip, connected=True)
-            output = Root(session).run("echo AIP_ROOT_OK", connected=True)
-            if "AIP_ROOT_OK" not in output:
-                raise RuntimeError("Temporary root command channel did not confirm readiness")
+            daemon = ROOT / "device" / "aip_root" / "daemon.sh"
+            session.xcb.push(daemon, "/tmp/q80_root_daemon.sh")
+            spawn = folder / "spawn"
+            spawn.write_bytes(b"go\n")
+            session.xcb.push(spawn, "/tmp/q80_root_spawn")
+            empty = folder / "spawn.aip"
+            empty.touch()
+            session.xcb.device_command("installer", "aip", str(empty), check=False)
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    session.xcb.stat("/tmp/q80_root_ready")
+                    break
+                except FileNotFoundError:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Root daemon did not start")
+                    time.sleep(0.5)
+            _restore_stock_libosal(session)
         except Exception as exc:
+            try:
+                _restore_stock_libosal(session)
+            except Exception as restore_error:
+                raise RuntimeError(
+                    f"aip-root start stopped: {exc}. Stock libosal could not be restored: "
+                    f"{restore_error}. Backup: {backup}. Reboot before trying again."
+                ) from exc
             raise RuntimeError(
-                f"aip-root start stopped: {exc}. Device-specific stock libosal backup: {backup}. "
-                "If normal startup is affected, reboot before trying again."
+                f"aip-root start stopped: {exc}. Stock libosal is restored. Backup: {backup}."
             ) from exc
 
-    # Metadata entries are temporary; the root loader remains until restored or rebooted.
+    # The root daemon stays alive for this boot; libosal is already restored.
     for app_id in (busybox_id, loader_id):
         session.xcb.device_command("installer", "uaip", app_id, check=False)
-    message = f"Root XCB command channel is ready. Stock libosal backup: {backup}. Restore it before normal app work."
+    message = f"Root XCB command channel is ready. Stock libosal restored from: {backup}."
     success(log, "%s", message)
     return message
 
 
-def restore(session: Session) -> str:
+def stop(session: Session) -> str:
+    """Close the root command channel for this boot."""
+    session.xcb.connect()
+    try:
+        session.xcb.stat("/tmp/q80_root_ready")
+    except FileNotFoundError:
+        message = "Root XCB command channel is already stopped."
+        success(log, "%s", message)
+        return message
+    Root(session).run("/bin/busybox rm -f /tmp/q80_root_ready", connected=True)
+    message = "Root XCB command channel stopped."
+    success(log, "%s", message)
+    return message
+
+
+def _restore_stock_libosal(session: Session) -> str:
     original = stock_backup()
     expected = hashlib.sha256(original.read_bytes()).hexdigest()
     session.xcb.connect()
