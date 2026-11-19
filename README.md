@@ -6,7 +6,6 @@ Q80 的電腦端開發與救援工具。指令可用 `python -m q80 <命令>` �
 
 - Python 3.11 以上。
 - XCB client：`vendor/xcb.exe`，或在設定檔指定位置。
-- 建置裝置端程式時，需要 PATH 中的 `arm-linux-gnueabi-gcc`，也可在設定檔指定編譯器。
 
 將 `q80.toml.example` 複製為 `q80.toml`，填入裝置位址與 COM 埠。Wi-Fi 使用裝置原廠介面設定。
 
@@ -14,6 +13,14 @@ Q80 的電腦端開發與救援工具。指令可用 `python -m q80 <命令>` �
 Copy-Item q80.toml.example q80.toml
 python -m q80 xcb check
 ```
+
+編譯 C 程式前，在 Windows 建立 ARM 編譯環境（只需一次）：
+
+```powershell
+python toolchain/setup.py
+```
+
+腳本會下載 GCC 7.5.0 與 glibc 2.15 sysroot；已自行安裝編譯器者也可透過 PATH 或 `q80.toml` 指定。
 
 ## 常用流程
 
@@ -54,6 +61,7 @@ python -m q80 xcb reboot
 | `app new <name>` | 在 `device/apps/<name>/` 建立 `app.toml` 與最小 C 範本 |
 | `app build <name>` | 編譯 App 的 C 原始碼，產生 `build/<id>/<binary>`（預設為 SO） |
 | `app pack <name>` | 將已編好的 SO 與 App 資訊打包成 `build/<id>.aip` |
+| `app-exe build <source.c> <output>` | 編譯有 `main()` 的 ARM 執行檔 |
 
 ### XCB 操作（不需要 Telnet）
 
@@ -99,8 +107,11 @@ python -m q80 xcb reboot
 - `q80/system/`：臨時 root、PED 與開機 hook 流程。
 - `q80/aip.py`、`q80/installer.py`：AIP 打包與安裝。
 - `device/`：在 Q80 執行的 C 程式與 shell 腳本。
+- `toolchain/`：Windows 編譯環境的下載與解壓腳本。
 - `vendor/`：XCB client 與 BusyBox；`tests/`：本機測試。
 
 ## 技術流程
 
 [AIP root、PED 與 preload 技術文檔](docs/technical-flows.md) 說明執行順序、檔案路徑與流程圖。
+
+有 `main()` 的 ARM 執行檔使用 `app-exe build`；`app_main` DLL 使用 `app build`。工具鏈來源與實機啟動方式見 [Windows main() 編譯](docs/windows-main.md)。

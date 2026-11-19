@@ -9,6 +9,9 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger(__name__)
+LOCAL_COMPILER = (ROOT / "toolchain" / "compiler" /
+                  "gcc-linaro-7.5.0-2019.12-i686-mingw32_arm-linux-gnueabi" /
+                  "bin" / "arm-linux-gnueabi-gcc.exe")
 
 
 @dataclass(frozen=True)
@@ -36,5 +39,6 @@ def load(path: Path | None = None) -> Config:
         serial=device.get("serial", Config.serial),
         xcb_exe=xcb,
         timeout=float(device.get("timeout", Config.timeout)),
-        compiler=tools.get("compiler", Config.compiler),
+        compiler=tools.get("compiler", str(LOCAL_COMPILER)
+                           if LOCAL_COMPILER.is_file() else Config.compiler),
     )

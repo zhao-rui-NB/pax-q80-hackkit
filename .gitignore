@@ -2,6 +2,10 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 build/
+toolchain/*.tar.*
+toolchain/*.part
+toolchain/compiler/
+toolchain/sysroot/
 backups/
 q80.toml
 *.aip

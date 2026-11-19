@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from q80 import aip, app_manifest, apps, build, diagnostics, installer
+from q80 import aip, app_manifest, apps, build, diagnostics, installer, windows_main
 from q80.config import ROOT, load
 from q80.log import configure, report_error, success
 from q80.system import aip_root, ped, preload
@@ -63,6 +63,12 @@ def _parser() -> _ArgumentParser:
     ):
         app_actions.add_parser(action, help=description).add_argument("name")
     app_actions.add_parser("list", help="list installed apps over Telnet")
+
+    exe = commands.add_parser("app-exe", help="build standalone main() apps on Windows")
+    exe_actions = exe.add_subparsers(dest="action", required=True)
+    exe_build = exe_actions.add_parser("build", help="compile a C source with main()")
+    exe_build.add_argument("source", type=Path)
+    exe_build.add_argument("output", type=Path)
 
     aip_parser = commands.add_parser("aip", help="inspect or install AIP files")
     aip_actions = aip_parser.add_subparsers(dest="action", required=True)
@@ -231,6 +237,9 @@ def execute(words: list[str], session: Session | None) -> int | None:
 
     if args.group == "app" and args.action == "new":
         app_manifest.create(args.name)
+        return 0
+    if args.group == "app-exe":
+        windows_main.build(args.source, args.output, load())
         return 0
     if args.group == "app" and args.action == "pack":
         app = app_manifest.load(args.name)
