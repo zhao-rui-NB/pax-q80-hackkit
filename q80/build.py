@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 COMMON_FLAGS = [
-    "-nostdlib", "-nodefaultlibs", "-ffreestanding",
+    "-nostdlib", "-ffreestanding",
     "-fno-stack-protector", "-fno-asynchronous-unwind-tables",
     "-march=armv6", "-marm", "-mfloat-abi=soft", "-O2",
     "-Wl,--build-id=none",
@@ -65,6 +65,9 @@ def build_support(config: Config, component: str) -> Path:
     if shared:
         command += ["-Wl,--hash-style=sysv", f"-Wl,-soname,{soname}"]
     command += ["-o", str(output), str(source)]
+    if component == "ped_patch":
+        # Keep startup files out; resolve libc calls from the device at runtime.
+        command += ["-lc"]
     subprocess.run(command, check=True)
     _check_arm(output)
     success(log, "Device component built: %s", output)
