@@ -115,3 +115,5 @@ python -m q80 xcb reboot
 [AIP root、PED 與 preload 技術文檔](docs/technical-flows.md) 說明執行順序、檔案路徑與流程圖。
 
 有 `main()` 的 ARM 執行檔使用 `app-exe build`；`app_main` DLL 使用 `app build`。工具鏈來源與實機啟動方式見 [Windows main() 編譯](docs/windows-main.md)。
+
+需要螢幕顯示範例，可從 [screen_hello](device/apps/screen_hello/README.md) 開始。
