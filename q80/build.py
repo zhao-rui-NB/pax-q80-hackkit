@@ -65,7 +65,7 @@ def build_support(config: Config, component: str) -> Path:
     if shared:
         command += ["-Wl,--hash-style=sysv", f"-Wl,-soname,{soname}"]
     command += ["-o", str(output), str(source)]
-    if component == "ped_patch":
+    if component in ("ped_patch", "preload_hook"):
         # Keep startup files out; resolve libc calls from the device at runtime.
         command += ["-lc"]
     subprocess.run(command, check=True)

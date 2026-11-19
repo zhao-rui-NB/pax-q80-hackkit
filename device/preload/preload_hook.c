@@ -1,304 +1,178 @@
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mount.h>
+#include <sys/prctl.h>
+#include <sys/ptrace.h>
+#include <sys/sendfile.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+/*
+ * /data/etc/ld.so.preload 會把此 SO 載入每個動態連結的程序。
+ * on_load() 只讓 servicemanager 執行一次開機流程：解除 PED 控制、
+ * 修改 PID 1 的 ro.fac.tamper_clear，再複製 BusyBox 啟動 runtime 腳本。
+ * property 檔案與紀錄格式沿用 patch_tamper.c 的此韌體假設。
+ */
 typedef unsigned int u32;
 
-static long syscall0(long number)
-{
-    register long r7 __asm__("r7") = number;
-    register long r0 __asm__("r0");
-
-    __asm__ volatile("svc 0" : "=r"(r0) : "r"(r7) : "memory");
-    return r0;
-}
-
-static long syscall3(long number, long arg0, long arg1, long arg2)
-{
-    register long r0 __asm__("r0") = arg0;
-    register long r1 __asm__("r1") = arg1;
-    register long r2 __asm__("r2") = arg2;
-    register long r7 __asm__("r7") = number;
-
-    __asm__ volatile("svc 0"
-                     : "+r"(r0)
-                     : "r"(r1), "r"(r2), "r"(r7)
-                     : "memory");
-    return r0;
-}
-
-static long syscall4(long number, long arg0, long arg1, long arg2, long arg3)
-{
-    register long r0 __asm__("r0") = arg0;
-    register long r1 __asm__("r1") = arg1;
-    register long r2 __asm__("r2") = arg2;
-    register long r3 __asm__("r3") = arg3;
-    register long r7 __asm__("r7") = number;
-
-    __asm__ volatile("svc 0"
-                     : "+r"(r0)
-                     : "r"(r1), "r"(r2), "r"(r3), "r"(r7)
-                     : "memory");
-    return r0;
-}
-
-static long syscall5(long number, long arg0, long arg1, long arg2,
-                     long arg3, long arg4)
-{
-    register long r0 __asm__("r0") = arg0;
-    register long r1 __asm__("r1") = arg1;
-    register long r2 __asm__("r2") = arg2;
-    register long r3 __asm__("r3") = arg3;
-    register long r4 __asm__("r4") = arg4;
-    register long r7 __asm__("r7") = number;
-
-    __asm__ volatile("svc 0"
-                     : "+r"(r0)
-                     : "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r7)
-                     : "memory");
-    return r0;
-}
-
-static u32 text_length(const char *text)
-{
-    u32 length = 0;
-    while (text[length] != '\0')
-        ++length;
-    return length;
-}
-
-static int text_equal(const char *left, const char *right)
-{
-    u32 index = 0;
-    while (left[index] != '\0' && right[index] != '\0') {
-        if (left[index] != right[index])
-            return 0;
-        ++index;
-    }
-    return left[index] == right[index];
-}
-
-static void write_all(long fd, const char *data, u32 size)
-{
-    while (size != 0) {
-        const long result = syscall3(4, fd, (long)data, size);
-        if (result <= 0)
-            return;
-        data += result;
-        size -= (u32)result;
-    }
-}
+enum {
+    /* 此版 property 紀錄依序是 name[32]、serial[4]、value。 */
+    PROPERTY_NAME_SIZE = 32,
+    PROPERTY_VALUE_OFFSET = PROPERTY_NAME_SIZE + 4,
+};
 
 static void log_status(const char *status)
 {
-    static const char path[] = "/data/tmp/q80_boot_hook.log";
-    const long fd = syscall3(5, (long)path, 0x441, 0666);
+    /* 這裡可能在 Telnet 啟動前執行，先將階段結果附加到裝置上的檔案。 */
+    const int fd = open("/data/tmp/q80_boot_hook.log",
+                        O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (fd < 0)
         return;
-    write_all(fd, status, text_length(status));
-    write_all(fd, "\n", 1);
-    (void)syscall3(6, fd, 0, 0);
-}
-
-static void log_hex(const char *label, u32 value)
-{
-    static const char digits[] = "0123456789abcdef";
-    static const char path[] = "/data/tmp/q80_boot_hook.log";
-    char text[64];
-    u32 offset = 0;
-    const long fd = syscall3(5, (long)path, 0x441, 0666);
-
-    if (fd < 0)
-        return;
-    while (label[offset] != '\0' && offset < 48) {
-        text[offset] = label[offset];
-        ++offset;
-    }
-    for (u32 shift = 28; shift <= 28; shift -= 4) {
-        text[offset++] = digits[(value >> shift) & 0xfU];
-        if (shift == 0)
-            break;
-    }
-    text[offset++] = '\n';
-    write_all(fd, text, offset);
-    (void)syscall3(6, fd, 0, 0);
-}
-
-static void get_process_name(char *name, u32 size)
-{
-    for (u32 index = 0; index < size; ++index)
-        name[index] = '\0';
-    (void)syscall3(172, 16, (long)name, 0);
-}
-
-static void ensure_proc_mounted(void)
-{
-    static const char source[] = "proc";
-    static const char target[] = "/proc";
-    static const char filesystem[] = "proc";
-
-    (void)syscall5(
-        21, (long)source, (long)target, (long)filesystem, 0, 0);
+    (void)write(fd, status, strlen(status));
+    (void)write(fd, "\n", 1);
+    (void)close(fd);
 }
 
 static int write_value(const char *path, const char *value)
 {
-    const long fd = syscall3(5, (long)path, 0x241, 0666);
+    const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0)
         return -1;
-    write_all(fd, value, text_length(value));
-    (void)syscall3(6, fd, 0, 0);
-    return 0;
+    const size_t size = strlen(value);
+    const int written = write(fd, value, size) == (ssize_t)size;
+    (void)close(fd);
+    return written ? 0 : -1;
 }
 
-static int contains(const char *text, u32 size, const char *needle)
+static u32 find_mapping_base(char *maps, u32 size)
 {
-    const u32 needle_length = text_length(needle);
-    for (u32 index = 0; index + needle_length <= size; ++index) {
-        u32 matched = 0;
-        while (matched < needle_length &&
-               text[index + matched] == needle[matched])
-            ++matched;
-        if (matched == needle_length)
-            return 1;
-    }
-    return 0;
-}
-
-static u32 find_mapping_base(const char *maps, u32 size)
-{
-    static const char marker[] = "/dev/__properties__";
-    static const char writable[] = "rw-s";
-
-    for (u32 index = 0; index < size; ++index) {
-        if (index != 0 && maps[index - 1] != '\n')
-            continue;
-
-        u32 line_end = index;
-        while (line_end < size && maps[line_end] != '\n')
-            ++line_end;
-        if (!contains(maps + index, line_end - index, marker) ||
-            !contains(maps + index, line_end - index, writable))
-            continue;
-
-        u32 value = 0;
-        u32 cursor = index;
-        while (cursor < size && maps[cursor] != '\n') {
-            const char ch = maps[cursor++];
-            u32 digit;
-            if (ch >= '0' && ch <= '9')
-                digit = (u32)(ch - '0');
-            else if (ch >= 'a' && ch <= 'f')
-                digit = (u32)(ch - 'a' + 10);
-            else if (ch == '-')
-                return value;
-            else
-                break;
-            value = (value << 4) | digit;
+    /*
+     * /proc/1/maps 的每行以「起始位址-結束位址 權限 ... 路徑」開頭。
+     * 找到 PID 1 對 property 檔案的可寫共享映射，再解析行首位址。
+     * 此韌體從檔案偏移 0 映射，所以映射起點可直接加上紀錄偏移。
+     */
+    maps[size] = '\0';
+    char *line = maps;
+    while (*line != '\0') {
+        char *next = strchr(line, '\n');
+        if (next != NULL)
+            *next = '\0';
+        if (strstr(line, "/dev/__properties__") != NULL &&
+            strstr(line, "rw-s") != NULL) {
+            char *after;
+            const unsigned long base = strtoul(line, &after, 16);
+            if (*after == '-')
+                return (u32)base;
         }
+        if (next == NULL)
+            break;
+        line = next + 1;
     }
     return 0;
 }
 
 static u32 find_property(const char *area, u32 size)
 {
+    /* 二進位資料不能當 C 字串；同時比對完整名稱與此韌體的 serial。 */
     static const char name[] = "ro.fac.tamper_clear";
-    const u32 name_length = sizeof(name) - 1;
-
-    for (u32 offset = 0; offset + 36 < size; ++offset) {
-        u32 matched = 0;
-        while (matched < name_length &&
-               area[offset + matched] == name[matched])
-            ++matched;
-        if (matched != name_length)
-            continue;
-        if (area[offset + name_length] != '\0')
-            continue;
-        if (area[offset + 32] == 0 && area[offset + 33] == 0 &&
-            area[offset + 34] == 0 && area[offset + 35] == 1)
+    static const char serial[] = {0, 0, 0, 1};
+    for (u32 offset = 0; offset + PROPERTY_VALUE_OFFSET < size; ++offset) {
+        if (memcmp(area + offset, name, sizeof(name)) == 0 &&
+            memcmp(area + offset + PROPERTY_NAME_SIZE,
+                   serial, sizeof(serial)) == 0)
             return offset;
     }
     return 0xffffffffU;
 }
 
-static int read_property_area(char *area, u32 size)
+static ssize_t read_file(const char *path, char *data, size_t size)
 {
-    static const char path[] = "/proc/1/fd/4";
-    const long fd = syscall3(5, (long)path, 0, 0);
-    u32 used = 0;
-
+    /* read() 可少於要求的長度，讀到 EOF 或填滿緩衝區為止。 */
+    const int fd = open(path, O_RDONLY);
     if (fd < 0)
         return -1;
+    size_t used = 0;
     while (used < size) {
-        const long result =
-            syscall3(3, fd, (long)(area + used), size - used);
-        if (result <= 0)
+        const ssize_t count = read(fd, data + used, size - used);
+        if (count < 0) {
+            (void)close(fd);
+            return -1;
+        }
+        if (count == 0)
             break;
-        used += (u32)result;
+        used += (size_t)count;
     }
-    (void)syscall3(6, fd, 0, 0);
-    return used == size ? 0 : -1;
+    (void)close(fd);
+    return (ssize_t)used;
+}
+
+static int read_property_area(char *area, u32 size)
+{
+    /* PID 1 的 fd 4 是此韌體的 property backing file；只讀它以找偏移。 */
+    return read_file("/proc/1/fd/4", area, size) == size ? 0 : -1;
 }
 
 static int patch_init_tamper_clear(void)
 {
-    static const char maps_path[] = "/proc/1/maps";
-    char maps[8192];
+    char maps[8192 + 1];
     char area[32768];
-    u32 maps_used = 0;
     int wait_status = 0;
     u32 base;
     u32 property_offset;
     u32 value_address;
-    const u32 value_word = 0x00000031U;
-    long maps_fd;
+    const u32 value_word = 0x00000031U; /* 小端序：'1'、NUL、NUL、NUL。 */
     long result;
 
     if (read_property_area(area, sizeof(area)) != 0) {
         log_status("HOOK_AREA_OPEN_FAILED");
         return -1;
     }
-
     property_offset = find_property(area, sizeof(area));
     if (property_offset == 0xffffffffU) {
         log_status("HOOK_PROPERTY_NOT_FOUND");
         return -1;
     }
 
-    maps_fd = syscall3(5, (long)maps_path, 0, 0);
-    if (maps_fd < 0) {
+    const ssize_t maps_used =
+        read_file("/proc/1/maps", maps, sizeof(maps) - 1);
+    if (maps_used < 0) {
         log_status("HOOK_MAPS_OPEN_FAILED");
         return -1;
     }
-    while (maps_used < sizeof(maps)) {
-        result = syscall3(
-            3, maps_fd, (long)(maps + maps_used), sizeof(maps) - maps_used);
-        if (result <= 0)
-            break;
-        maps_used += (u32)result;
-    }
-    (void)syscall3(6, maps_fd, 0, 0);
-
-    base = find_mapping_base(maps, maps_used);
+    base = find_mapping_base(maps, (u32)maps_used);
     if (base == 0) {
         log_status("HOOK_PROPERTY_MAP_NOT_FOUND");
         return -1;
     }
 
-    result = syscall4(26, 16, 1, 0, 0);
-    (void)syscall4(114, 1, (long)&wait_status, 0, 0);
+    /* 停下 PID 1 並等它確實進入停止狀態，才可改寫其記憶體。 */
+    result = ptrace(PTRACE_ATTACH, 1, 0, 0);
     if (result < 0) {
         log_status("HOOK_PTRACE_ATTACH_FAILED");
         return -1;
     }
-
-    value_address = base + property_offset + 36;
-    result = syscall4(26, 5, 1, value_address, value_word);
-    if (result != 0) {
-        log_status("HOOK_PTRACE_WRITE_FAILED");
-        (void)syscall4(26, 17, 1, 0, 0);
+    result = waitpid(1, &wait_status, __WALL);
+    if (result != 1 || !WIFSTOPPED(wait_status)) {
+        log_status("HOOK_PTRACE_WAIT_FAILED");
+        (void)ptrace(PTRACE_DETACH, 1, 0, 0);
         return -1;
     }
 
-    (void)syscall4(26, 17, 1, 0, 0);
+    /* 映射起點 + 紀錄偏移 + 36 是 value 在 PID 1 中的虛擬位址。 */
+    value_address = base + property_offset + PROPERTY_VALUE_OFFSET;
+    result = ptrace(PTRACE_POKEDATA, 1, (void *)(long)value_address,
+                    (void *)(long)value_word);
+    if (result != 0) {
+        log_status("HOOK_PTRACE_WRITE_FAILED");
+        (void)ptrace(PTRACE_DETACH, 1, 0, 0);
+        return -1;
+    }
+    (void)ptrace(PTRACE_DETACH, 1, 0, 0);
     if (read_property_area(area, sizeof(area)) != 0 ||
-        area[property_offset + 36] != '1') {
+        area[property_offset + PROPERTY_VALUE_OFFSET] != '1') {
         log_status("HOOK_PROPERTY_VERIFY_FAILED");
         return -1;
     }
@@ -307,61 +181,52 @@ static int patch_init_tamper_clear(void)
 
 static int copy_file(const char *source, const char *destination, int mode)
 {
-    char buffer[4096];
-    long source_fd;
-    long destination_fd;
-
-    source_fd = syscall3(5, (long)source, 0, 0);
+    /*
+     * 開機時 /usr/bin/busybox 可能尚不存在，先從持久保存的 /data 複製。
+     * sendfile 在核心內複製資料；循環到 EOF 才算完成，最後設定執行權限。
+     */
+    const int source_fd = open(source, O_RDONLY);
     if (source_fd < 0)
         return -1;
-    destination_fd = syscall3(5, (long)destination, 0x241, mode);
+    const int destination_fd = open(destination, O_WRONLY | O_CREAT | O_TRUNC,
+                                    mode);
     if (destination_fd < 0) {
-        (void)syscall3(6, source_fd, 0, 0);
+        (void)close(source_fd);
         return -1;
     }
-
+    int result = 0;
     for (;;) {
-        const long count =
-            syscall3(3, source_fd, (long)buffer, sizeof(buffer));
-        if (count < 0) {
-            (void)syscall3(6, source_fd, 0, 0);
-            (void)syscall3(6, destination_fd, 0, 0);
-            return -1;
-        }
-        if (count == 0)
+        const ssize_t copied = sendfile(destination_fd, source_fd, NULL, 1 << 20);
+        if (copied == 0)
             break;
-        write_all(destination_fd, buffer, (u32)count);
+        if (copied < 0) {
+            result = -1;
+            break;
+        }
     }
-
-    (void)syscall3(6, source_fd, 0, 0);
-    (void)syscall3(6, destination_fd, 0, 0);
-    (void)syscall3(15, (long)destination, mode, 0);
-    return 0;
+    if (fchmod(destination_fd, mode) != 0)
+        result = -1;
+    (void)close(source_fd);
+    (void)close(destination_fd);
+    return result;
 }
 
 static void spawn_runtime(void)
 {
-    static const char busybox_source[] =
-        "/data/opt/q80_boot/busybox";
-    static const char busybox_runtime[] =
-        "/usr/bin/busybox";
-    static const char script[] =
-        "/data/opt/q80_boot/q80_boot_runtime.sh";
+    /* fork 後只在子程序執行腳本，讓 servicemanager 繼續完成啟動。 */
+    static const char source[] = "/data/opt/q80_boot/busybox";
+    static const char destination[] = "/usr/bin/busybox";
     static char *const argv[] = {
-        "busybox",
-        "sh",
-        (char *)script,
-        0,
+        "busybox", "sh", "/data/opt/q80_boot/q80_boot_runtime.sh", NULL,
     };
 
-    if (copy_file(busybox_source, busybox_runtime, 0755) != 0) {
+    if (copy_file(source, destination, 0755) != 0) {
         log_status("HOOK_BUSYBOX_COPY_FAILED");
         return;
     }
-
-    if (syscall0(2) == 0) {
-        (void)syscall3(11, (long)busybox_runtime, (long)argv, 0);
-        (void)syscall0(1);
+    if (fork() == 0) {
+        (void)execve(destination, argv, NULL);
+        _exit(1);
     }
 }
 
@@ -371,49 +236,32 @@ static void apply_boot_hook(void)
         "/sys/devices/platform/iproc-bbl/brcm-iproc-bbl/bbl_tmon_en_dis";
     static const char bbl_unlock[] =
         "/sys/devices/platform/iproc-bbl/brcm-iproc-bbl/bbl_unlock_dis";
-    static const char trigger[] =
-        "/sys/pax/ped_trigger_state";
-    int patched;
+    static const char trigger[] = "/sys/pax/ped_trigger_state";
 
     log_status("HOOK_START");
-    ensure_proc_mounted();
+    /*
+     * /proc 供後續讀取 PID 1 的 fd 與 maps。
+     * 接著寫入既有的 sysfs 控制檔：bbl_tmon_en_dis=0、
+     * bbl_unlock_dis=1、ped_trigger_state=0；沒有刪除任何節點。
+     */
+    (void)mount("proc", "/proc", "proc", 0, NULL);
     (void)write_value(bbl_tmon, "0");
     (void)write_value(bbl_unlock, "1");
     (void)write_value(trigger, "0");
 
-    patched = patch_init_tamper_clear();
+    const int patched = patch_init_tamper_clear();
     log_status(patched == 0 ? "HOOK_TAMPER_CLEAR_OK" :
                               "HOOK_TAMPER_CLEAR_FAILED");
     spawn_runtime();
     log_status("HOOK_RUNTIME_SPAWNED");
 }
 
-#ifdef Q80_STANDALONE
-__attribute__((used, noinline))
-static void standalone_entry(void)
-{
-    apply_boot_hook();
-    (void)syscall0(1);
-}
-
-__attribute__((naked, noreturn))
-void _start(void)
-{
-    __asm__ volatile(
-        "bl standalone_entry\n"
-        "mov r0, #0\n"
-        "mov r7, #1\n"
-        "svc 0\n"
-    );
-}
-#else
 __attribute__((constructor))
 static void on_load(void)
 {
-    char process_name[17];
-
-    get_process_name(process_name, sizeof(process_name));
-    if (text_equal(process_name, "servicemanager"))
+    /* ld.so.preload 會載入每個程序；只有 servicemanager 執行開機操作。 */
+    char process_name[17] = {0};
+    if (prctl(PR_GET_NAME, (unsigned long)process_name, 0, 0, 0) == 0 &&
+        strcmp(process_name, "servicemanager") == 0)
         apply_boot_hook();
 }
-#endif
