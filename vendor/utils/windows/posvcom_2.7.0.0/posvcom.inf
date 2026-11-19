@@ -1,0 +1,150 @@
+; POSVCOM.INF
+; 
+; Copyright ?2000-2013 Future Technology Devices International Limited
+;
+; USB serial port driver installation file for Windows 2000, XP, Server 2003, Vista, Server 2008,
+; Windows 7 and Server 2008 R2 (x86 and x64).
+; 
+[Version]
+Signature="$Windows NT$"
+DriverPackageType=PlugAndPlay
+DriverPackageDisplayName=%DeviceName%
+Class=Ports
+ClassGuid={4D36E978-E325-11CE-BFC1-08002BE10318}
+Provider=%ProviderName%
+DriverVer=10/16/2015,2.7.0.0
+Catalogfile=posvcom.cat
+
+[SourceDisksNames]
+1=%DriversDisk%,,,
+
+[SourceDisksFiles]
+posvcom.sys=1,i386
+
+[SourceDisksFiles.amd64]
+posvcom.sys=1,amd64
+
+[DestinationDirs]
+Wdm.Files.Driver=10,System32\Drivers
+
+[ControlFlags]
+ExcludeFromSelect=*
+
+[Manufacturer]
+%ProviderName% = PAXHW,NTamd64
+
+[PAXHW]
+%VID_1234&PID_0101.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0101
+%VID_1234&PID_0102.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0102
+%VID_1234&PID_0103.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0103
+%VID_1234&PID_0104.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0104
+%VID_1234&PID_0105.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0105
+%VID_1234&PID_0106.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0106
+%VID_1234&PID_0107.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0107
+%VID_1234&PID_0108.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0108
+%VID_1234&PID_0109.DeviceDesc%=PAXPort.NT, USB\VID_1234&PID_0109
+
+%VID_0866&PID_0201.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0201
+%VID_0866&PID_0202.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0202
+%VID_0866&PID_0203.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0203
+%VID_0866&PID_0204.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0204
+%VID_0866&PID_0205.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0205
+%VID_0866&PID_0206.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0206
+%VID_0866&PID_0207.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0207
+%VID_0866&PID_0208.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0208
+%VID_0866&PID_0209.DeviceDesc%=PAXPort.NT, USB\VID_0866&PID_0209
+[PAXHW.NTamd64]
+%VID_1234&PID_0101.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0101
+%VID_1234&PID_0102.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0102
+%VID_1234&PID_0103.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0103
+%VID_1234&PID_0104.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0104
+%VID_1234&PID_0105.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0105
+%VID_1234&PID_0106.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0106
+%VID_1234&PID_0107.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0107
+%VID_1234&PID_0108.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0108
+%VID_1234&PID_0109.DeviceDesc%=PAXPort.NTamd64, USB\VID_1234&PID_0109
+
+%VID_0866&PID_0201.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0201
+%VID_0866&PID_0202.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0202
+%VID_0866&PID_0203.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0203
+%VID_0866&PID_0204.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0204
+%VID_0866&PID_0205.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0205
+%VID_0866&PID_0206.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0206
+%VID_0866&PID_0207.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0207
+%VID_0866&PID_0208.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0208
+%VID_0866&PID_0209.DeviceDesc%=PAXPort.NTamd64, USB\VID_0866&PID_0209
+[PAXPort.NT.AddService]
+DisplayName    = %ServiceName%
+ServiceType    = %SERVICE_KERNEL_DRIVER%
+StartType      = %SERVICE_DEMAND_START%
+ErrorControl   = %SERVICE_ERROR_NORMAL%
+ServiceBinary  = %10%\System32\Drivers\posvcom.sys
+LoadOrderGroup = Base
+
+[Serenum_AddService]
+DisplayName    = %SereServiceName%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\serenum.sys
+LoadOrderGroup = PNP Filter
+
+[PAXPort.NT.AddReg]
+HKR,,,,%PortsClassName%
+HKR,,Icon,,"-23"
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,posvcom.sys
+HKR,,EnumPropPages32,,"MsPorts.dll,SerialPortPropPageProvider"
+
+[Wdm.Files.Driver]
+posvcom.sys,,,%COPYFLG_NOSKIP%
+
+[PAXPort.NT]
+CopyFiles=Wdm.Files.Driver
+AddReg=PAXPort.NT.AddReg
+
+[PAXPort.NTamd64]
+CopyFiles=Wdm.Files.Driver
+AddReg=PAXPort.NT.AddReg
+
+[PAXPort.NT.Services]
+AddService = vcom_service, %SPSVCINST_ASSOCSERVICE%, PAXPort.NT.AddService
+AddService = Serenum,,Serenum_AddService
+
+[PAXPort.NTamd64.Services]
+AddService = vcom_service, %SPSVCINST_ASSOCSERVICE%, PAXPort.NT.AddService
+AddService = Serenum,,Serenum_AddService
+
+[Strings]
+ProviderName="PAX Technology Co. Ltd"
+PortsClassName="PosPorts(VCOM)"
+DeviceName="Pos Vcom Device"
+ServiceName="Pos Vcom Driver"
+SereServiceName="Serenum Filter Driver"
+VID_1234&PID_0101.DeviceDesc="USB Serial Port"
+VID_1234&PID_0102.DeviceDesc="USB Serial Port"
+VID_1234&PID_0103.DeviceDesc="USB Serial Port"
+VID_1234&PID_0104.DeviceDesc="USB Serial Port"
+VID_1234&PID_0105.DeviceDesc="USB Serial Port"
+VID_1234&PID_0106.DeviceDesc="USB Serial Port"
+VID_1234&PID_0107.DeviceDesc="USB Serial Port"
+VID_1234&PID_0108.DeviceDesc="USB Serial Port"
+VID_1234&PID_0109.DeviceDesc="USB Serial Port"
+
+VID_0866&PID_0201.DeviceDesc="USB Serial Port"
+VID_0866&PID_0202.DeviceDesc="USB Serial Port"
+VID_0866&PID_0203.DeviceDesc="USB Serial Port"
+VID_0866&PID_0204.DeviceDesc="USB Serial Port"
+VID_0866&PID_0205.DeviceDesc="USB Serial Port"
+VID_0866&PID_0206.DeviceDesc="USB Serial Port"
+VID_0866&PID_0207.DeviceDesc="USB Serial Port"
+VID_0866&PID_0208.DeviceDesc="USB Serial Port"
+VID_0866&PID_0209.DeviceDesc="USB Serial Port"
+DriversDisk="SYS file directory"
+
+SPSVCINST_ASSOCSERVICE=0x00000002	; Driver service is associated with device being installed
+COPYFLG_NOSKIP=2	; Do not allow user to skip file
+SERVICE_KERNEL_DRIVER=1
+SERVICE_AUTO_START=2
+SERVICE_DEMAND_START=3
+SERVICE_ERROR_NORMAL=1

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?><devinfo>
+	<terminal>
+		<os>Prolin2.4.51[D1]</os>
+		<build-time>2016-03-09</build-time>
+		<sn>55152475</sn>
+		<exsn>G3TN05041AJCWX000000000000000000</exsn>
+		<mach>s900</mach>
+		<flash>128MB</flash>
+		<freeflash>61.27M</freeflash>
+		<boot>2.0.05.3256</boot>
+		<ram>59.14MB</ram>
+		<freeram>32.14M</freeram>
+		<pn>S900-0GW-363-02LU</pn>
+		<pukmode>2</pukmode>
+		<msr>MEGAHUNT SecureHead Reader V4.32</msr>
+	</terminal>
+	<application>
+		<app id="MAINAPP" >
+			<appname>MerchantDeviceApp</appname>
+			<bin>bin/MablApp</bin>
+			<version>1.2.1.2</version>
+			<vender>Optomany</vender>
+			<description>AxeptMerchantDevice</description>
+			<mtime>2016-09-29 12:40:06</mtime>
+		</app>
+	</application>
+	<package>
+	</package>
+	<uspuk>
+		<puk0 crc="0xA40EB99B" owner="" />
+	</uspuk>
+	<property>
+		<fac key="ro.fac.ubootver" value="2.0.05.3256" />
+		<fac key="ro.fac.exsn" value="G3TN05041AJCWX000000000000000000" />
+		<fac key="ro.fac.sn" value="55152475" />
+		<fac key="ro.fac.prolin_debug_level" value="1" />
+		<fac key="ro.fac.lcd.rotate" value="90" />
+		<fac key="ro.fac.pcd.param3" value="00000000000000000000" />
+		<fac key="ro.fac.pcd.param2" value="6F3C0B03020300000000" />
+		<fac key="ro.fac.pcd.param1" value="00000FFF0404116F1100" />
+		<fac key="ro.fac.sdhc" value="4-32GB,Class4" />
+		<fac key="ro.fac.touchscreen" value="resistive,ads7846" />
+		<fac key="ro.fac.audiocard" value="CS4344-CZZR" />
+		<fac key="ro.fac.videocard" value="08" />
+		<fac key="ro.fac.msr" value="E-MAG_MH1601" />
+		<fac key="ro.fac.sci" value="05" />
+		<fac key="ro.fac.pcd" value="03" />
+		<fac key="ro.fac.printer" value="PRT-48F" />
+		<fac key="ro.fac.radio" value="02" />
+		<fac key="ro.fac.wifi" value="01" />
+		<fac key="ro.fac.battery" value="1" />
+		<fac key="ro.fac.simsocket" value="1" />
+		<fac key="ro.fac.buzzer" value="1" />
+		<fac key="ro.fac.keybroad" value="1" />
+		<fac key="ro.fac.leddt" value="0" />
+		<fac key="ro.fac.usb.otg" value="1" />
+		<fac key="ro.fac.usb.device" value="1" />
+		<fac key="ro.fac.usb.host" value="1" />
+		<fac key="ro.fac.eth" value="0" />
+		<fac key="ro.fac.boardver" value="ANT04" />
+		<fac key="ro.fac.pn" value="S900-0GW-363-02LU" />
+		<fac key="ro.fac.conf.ver" value="08AL02_V2.0" />
+		<fac key="ro.fac.mach" value="s900" />
+		<fac key="ro.fac.hwver" value="08-05" />
+		<fac key="ro.fac.boardid" value="S900_M08_P05_GPRS_MG323" />
+	</property>
+</devinfo>
