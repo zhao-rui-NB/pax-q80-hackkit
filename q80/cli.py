@@ -49,6 +49,9 @@ def _parser() -> _ArgumentParser:
     pull = xcb_actions.add_parser("pull", help="download a remote file")
     pull.add_argument("remote")
     pull.add_argument("local")
+    push = xcb_actions.add_parser("push", help="upload a local file")
+    push.add_argument("local")
+    push.add_argument("remote")
 
     app = commands.add_parser("app", help="create, build, deploy, or run apps")
     app_actions = app.add_subparsers(dest="action", required=True)
@@ -95,10 +98,10 @@ def _words(line: str) -> list[str]:
 
 
 def _xcb_file(session: Session, action: str, args: list[str], current: str = "/") -> None:
-    expected = {"ls": (0, 1), "stat": (1,), "cat": (1,), "pull": (2,)}
+    expected = {"ls": (0, 1), "stat": (1,), "cat": (1,), "pull": (2,), "push": (2,)}
     if len(args) not in expected[action]:
         raise ValueError(f"Invalid arguments for xcb {action}")
-    path = args[0] if args else current
+    path = args[1] if action == "push" else (args[0] if args else current)
     path = posixpath.normpath(path if path.startswith("/") else posixpath.join(current, path))
     if action == "ls":
         for name, mode, size in session.xcb.ls(path):
@@ -112,15 +115,17 @@ def _xcb_file(session: Session, action: str, args: list[str], current: str = "/"
             session.xcb.pull(path, local)
             sys.stdout.buffer.write(local.read_bytes())
             print()
-    else:
+    elif action == "pull":
         session.xcb.pull(path, Path(args[1]))
         success(logging.getLogger("q80.transport.xcb"), "Saved %s", args[1])
+    else:
+        session.xcb.push(Path(args[0]), path)
 
 
 def _browse(session: Session) -> None:
     current = "/"
     logging.getLogger("q80.transport.xcb").info(
-        "Console: check, reconnect, pwd, cd, ls, stat, cat, pull; other commands go to xcb.exe"
+        "Console: check, reconnect, pwd, cd, ls, stat, cat, pull, push; other commands go to xcb.exe"
     )
     while True:
         try:
@@ -138,7 +143,7 @@ def _browse(session: Session) -> None:
                 session.xcb.raw("help")
             else:
                 logging.getLogger("q80.transport.xcb").info(
-                    "check, reconnect, pwd, cd [path], ls [path], stat path, cat path, pull path local"
+                    "check, reconnect, pwd, cd [path], ls [path], stat path, cat path, pull path local, push local path"
                 )
                 logging.getLogger("q80.transport.xcb").info(
                     "Commands such as devinfo and devices go to xcb.exe"
@@ -163,7 +168,7 @@ def _browse(session: Session) -> None:
             path = args[0] if args else "/"
             current = posixpath.normpath(path if path.startswith("/") else posixpath.join(current, path))
             continue
-        if action in ("ls", "stat", "cat", "pull"):
+        if action in ("ls", "stat", "cat", "pull", "push"):
             try:
                 _xcb_file(session, action, args, current)
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
@@ -187,7 +192,7 @@ def execute(words: list[str], session: Session | None) -> int | None:
     if words[0] == "--verbose":
         configure(True)
         words = words[1:]
-    xcb_actions = {"check", "reconnect", "ls", "stat", "cat", "pull"}
+    xcb_actions = {"check", "reconnect", "ls", "stat", "cat", "pull", "push"}
     if words and words[0] == "xcb" and len(words) > 1 and words[1] not in xcb_actions | {"-h", "--help"}:
         session = _device_session(session)
         action, *args = words[1:]
@@ -252,7 +257,12 @@ def execute(words: list[str], session: Session | None) -> int | None:
             session.xcb.reconnect()
         else:
             session.xcb.connect()
-            paths = [args.path] if args.action in ("ls", "stat", "cat") else [args.remote, args.local]
+            if args.action in ("ls", "stat", "cat"):
+                paths = [args.path]
+            elif args.action == "push":
+                paths = [args.local, args.remote]
+            else:
+                paths = [args.remote, args.local]
             _xcb_file(session, args.action, paths)
     elif args.group == "ped":
         if args.action == "status":

@@ -103,6 +103,15 @@ class XcbCliTest(unittest.TestCase):
         session.xcb.ls.assert_called_once_with("/tmp")
         self.assertIn("test", output.getvalue())
 
+    def test_one_shot_push_uses_file_service(self):
+        from q80.cli import execute
+
+        session = Mock()
+        self.assertEqual(execute(["xcb", "push", "local.bin", "/tmp/remote.bin"], session), 0)
+        session.xcb.connect.assert_called_once_with()
+        session.xcb.push.assert_called_once_with(Path("local.bin"), "/tmp/remote.bin")
+        session.xcb.raw.assert_not_called()
+
     def test_command_does_not_set_unsupported_server_port_env(self):
         with tempfile.TemporaryDirectory() as folder:
             executable = Path(folder) / "xcb.exe"

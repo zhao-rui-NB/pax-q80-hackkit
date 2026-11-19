@@ -66,6 +66,7 @@ python -m q80 xcb reboot
 | `xcb stat <path>` | 查看裝置檔案資訊 |
 | `xcb cat <path>` | 輸出裝置檔案內容 |
 | `xcb pull <remote> <local>` | 下載裝置檔案 |
+| `xcb push <local> <remote>` | 上傳本機檔案到裝置 |
 | `xcb <原生命令>` | 直接交給 `xcb.exe`，例如 `xcb reboot` |
 | `aip install <file>` | 安裝 AIP |
 | `aip-root start` | 建立本次開機可重複使用的 root 通道 |
