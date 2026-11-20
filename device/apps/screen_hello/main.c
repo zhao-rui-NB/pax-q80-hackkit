@@ -1,4 +1,4 @@
-/* A small Q80 app: show text with the device's XUI library for ten seconds. */
+/* A small Q80 app: show text until a key is pressed. */
 #include <dlfcn.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -12,6 +12,15 @@ typedef __typeof__(&XuiCreateFont) xui_font_fn;
 typedef __typeof__(&XuiDestroyFont) xui_destroy_font_fn;
 typedef __typeof__(&XuiCanvasSetBackground) xui_background_fn;
 typedef __typeof__(&XuiCanvasDrawText) xui_text_fn;
+typedef __typeof__(&XuiIsRunning) xui_running_fn;
+typedef __typeof__(&XuiHasKey) xui_has_key_fn;
+typedef __typeof__(&XuiGetKey) xui_get_key_fn;
+typedef __typeof__(&XuiClearKey) xui_clear_key_fn;
+
+static int rgb(int red, int green, int blue)
+{
+    return (int)XuiColor(blue, green, red, 255);
+}
 
 int app_main(int argc, char **argv)
 {
@@ -30,6 +39,10 @@ int app_main(int argc, char **argv)
     xui_destroy_font_fn destroy_font;
     xui_background_fn set_background;
     xui_text_fn draw_text;
+    xui_running_fn is_running;
+    xui_has_key_fn has_key;
+    xui_get_key_fn get_key;
+    xui_clear_key_fn clear_key;
     unsigned int i;
 
     (void)argc;
@@ -55,8 +68,13 @@ int app_main(int argc, char **argv)
     destroy_font = (xui_destroy_font_fn)dlsym(xui, "XuiDestroyFont");
     set_background = (xui_background_fn)dlsym(xui, "XuiCanvasSetBackground");
     draw_text = (xui_text_fn)dlsym(xui, "XuiCanvasDrawText");
+    is_running = (xui_running_fn)dlsym(xui, "XuiIsRunning");
+    has_key = (xui_has_key_fn)dlsym(xui, "XuiHasKey");
+    get_key = (xui_get_key_fn)dlsym(xui, "XuiGetKey");
+    clear_key = (xui_clear_key_fn)dlsym(xui, "XuiClearKey");
     if (!open_xui || !close_xui || !root_canvas || !create_font ||
-        !destroy_font || !set_background || !draw_text) {
+        !destroy_font || !set_background || !draw_text || !is_running ||
+        !has_key || !get_key || !clear_key) {
         puts("XUI function missing");
         return 1;
     }
@@ -75,12 +93,21 @@ int app_main(int argc, char **argv)
         return 1;
     }
 
-    set_background(root, XUI_BG_NORMAL, 0, XuiColor(32, 32, 32, 255));
-    draw_text(root, 40, 150, 40, font, XUI_TEXT_NORMAL,
-              XuiColor(255, 255, 255, 255), "HELLO Q80");
-    draw_text(root, 40, 220, 24, font, XUI_TEXT_NORMAL,
-              XuiColor(255, 255, 255, 255), "Screen demo");
-    sleep(10);
+    set_background(root, XUI_BG_NORMAL, 0, rgb(207, 219, 216));
+    draw_text(root, 40, 150, 46, font, XUI_BOLD,
+              rgb(22, 43, 45), "HELLO Q80");
+    draw_text(root, 40, 225, 30, font, XUI_BOLD,
+              rgb(26, 105, 89), "Screen demo");
+    draw_text(root, 40, 305, 30, font, XUI_BOLD,
+              rgb(47, 69, 70), "PRESS ANY KEY TO EXIT");
+    clear_key();
+    while (is_running()) {
+        if (has_key()) {
+            get_key();
+            break;
+        }
+        usleep(20000);
+    }
 
     destroy_font(font);
     close_xui();

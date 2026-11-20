@@ -1,0 +1,4 @@
+id = "printer"
+name = "Printer Lab"
+version = "0.1.0"
+libraries = ["osal", "xui"]

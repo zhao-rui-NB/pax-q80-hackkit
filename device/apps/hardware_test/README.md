@@ -1,6 +1,6 @@
 # Q80 硬體測試 App
 
-`hardware_test` 是直接連結原廠 XUI／OSAL 的 `app_main()` App。畫面依 Q80 的 480×800 螢幕設計；底部觸控按鈕切換分頁，實體 `X／Cancel` 或畫面上的 `EXIT` 退出。
+`hardware_test` 是直接連結原廠 XUI／OSAL 的 `app_main()` App。畫面依 Q80 的 480×800 螢幕設計，使用霧面銀綠底、暖灰白面板與原廠 TM 字型的 XUI 粗體大字；紅橘綠只用在功能重點；底部觸控按鈕切換分頁，實體 `X／Cancel` 或畫面上的 `EXIT` 退出。
 
 | 分頁 | 操作 |
 | --- | --- |

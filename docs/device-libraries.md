@@ -32,6 +32,6 @@
 
 目前 `toolchain/include/xui.h`、`osal.h` 只涵蓋這台 Q80 同名匯出的 XUI／OSAL 手冊函數：分別 57、235 個。這不涵蓋上表其他專有 `.so` 的介面，也不保證手冊中的參數型別與這台舊版庫的 ABI 完全相同。OSAL 有 34 個手冊外匯出、XUI 有 2 個，僅在 [匯出清單](../toolchain/include/q80_extra_exports.md) 列名。
 
-印表機沒有獨立的 `libprinter.so`。這台 `libosal.so` 匯出 19 個 `OsPrn*` 函數；實機有 `/dev/printer` 字元裝置，`/dev/printer_status` 連到 SPI 印表機驅動狀態。API 手冊另列 `OsPrnRawData`，但這台庫沒有匯出。現有 `osal.h` 尚缺手冊提及的 `PRN_REAL`、`PRN_BMP` 常數值及印表機錯誤碼；手冊沒有給出兩個模式常數的數值，不能自行猜測。未做實際列印測試。
+印表機沒有獨立的 `libprinter.so`。這台 `libosal.so` 匯出 19 個 `OsPrn*` 函數；實機有 `/dev/printer` 字元裝置，`/dev/printer_status` 連到 SPI 印表機驅動狀態。API 手冊另列 `OsPrnRawData`，但這台庫沒有匯出。檢查本機保存的 Q80 `libosal.so` 後確認 `OsPrnOpen(0, NULL)` 走實體 `/dev/printer` 路徑，故 `osal.h` 已定義 `PRN_REAL=0` 及手冊中的印表機錯誤碼；非零模式的具體用途仍待確認。[printer 測試 App](../device/apps/printer/README.md) 已實機驗證英文文字、字級、等級 4 濃度、384×240 點陣圖、中文點陣圖與走紙。
 
 其他值得按需求補充的介面是掃碼（`libdecoder`／`libSrDecoder`／`libzmxf`）、金鑰管理（`libProlinKMS`／`libgped`／`librki`）、讀卡輔助庫（`libimdll`）、音訊（ALSA）與觸控插件。須先取得可靠的函數原型／結構布局，再建立標頭；僅憑匯出名稱不足以安全呼叫。相機、蜂鳴器、磁條／IC／感應讀卡器的部分高階入口已在 OSAL 標頭。

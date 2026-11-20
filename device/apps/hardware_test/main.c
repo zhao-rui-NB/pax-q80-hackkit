@@ -1,4 +1,4 @@
-/* Simple Q80 hardware test with touch tabs and a physical Cancel exit. */
+/* Q80 hardware test with touch tabs and a physical Cancel exit. */
 #include <osal.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -49,7 +49,7 @@ static int rgb(int red, int green, int blue)
 
 static void text(int x, int y, int size, int color, const char *value)
 {
-    XuiCanvasDrawText(body, x, y, size, font, XUI_TEXT_NORMAL,
+    XuiCanvasDrawText(body, x, y, size, font, XUI_BOLD,
                       color, (char *)value);
 }
 
@@ -64,13 +64,13 @@ static int make_button(Button *button, XuiWindow *parent, int x, int y,
     button->normal.btn_round = 1;
     button->normal.btn_bg = background;
     button->normal.text = (char *)label;
-    button->normal.text_fg = rgb(255, 255, 255);
+    button->normal.text_fg = rgb(22, 43, 45);
     button->normal.text_font = font;
     button->normal.text_x = 10;
     button->normal.text_y = (height - text_size) / 2;
     button->normal.text_height = text_size;
     button->pressed = button->normal;
-    button->pressed.btn_bg = rgb(65, 125, 165);
+    button->pressed.btn_bg = rgb(185, 216, 204);
     if (XuiButtonSetStat(button->window, XUI_BTN_NORMAL, &button->normal) < 0 ||
         XuiButtonSetStat(button->window, XUI_BTN_PRESSED, &button->pressed) < 0 ||
         XuiButtonSetKey(button->window, key) < 0)
@@ -100,68 +100,77 @@ static void draw_page(void)
         "RED", "GREEN", "BLUE", "WHITE", "GRAY", "BLACK"
     };
 
-    XuiCanvasSetBackground(body, XUI_BG_NORMAL, 0, rgb(18, 24, 32));
-    text(20, 22, 38, rgb(255, 255, 255), "HARDWARE TEST");
-    text(20, 75, 27, rgb(95, 210, 230), tab_names[page]);
-    XuiCanvasDrawRect(body, 20, 113, 440, 2, rgb(80, 95, 110), 0, 1);
+    XuiCanvasSetBackground(body, XUI_BG_NORMAL, 0, rgb(207, 219, 216));
+    XuiCanvasDrawRect(body, 0, 0, WIDTH, 114, rgb(229, 235, 229), 0, 1);
+    XuiCanvasDrawRect(body, 20, 20, 7, 78, rgb(26, 105, 89), 0, 1);
+    text(42, 13, 40, rgb(22, 43, 45), "Q80 DEVICE LAB");
+    text(42, 68, 28, rgb(26, 105, 89), tab_names[page]);
+    XuiCanvasDrawRect(body, 16, 128, 448, 556, rgb(169, 190, 184), 1, 1);
+    XuiCanvasDrawRect(body, 16, 124, 448, 556, rgb(244, 241, 232), 1, 1);
+
+    exit_button.normal.text_fg = rgb(160, 39, 45);
+    XuiButtonSetStat(exit_button.window, XUI_BTN_NORMAL, &exit_button.normal);
 
     for (i = 0; i < PAGE_COUNT; ++i) {
-        tabs[i].normal.btn_bg = rgb(i == page ? 30 : 48,
-                                    i == page ? 105 : 58,
-                                    i == page ? 145 : 70);
+        tabs[i].normal.btn_bg = i == page ? rgb(190, 220, 202)
+                                           : rgb(222, 230, 222);
+        tabs[i].normal.text_fg = i == page ? rgb(20, 85, 70)
+                                              : rgb(22, 43, 45);
         XuiButtonSetStat(tabs[i].window, XUI_BTN_NORMAL, &tabs[i].normal);
     }
     show_items();
 
     if (page == KEY) {
-        text(24, 160, 35, rgb(240, 240, 240), "PRESS ANY KEY");
+        text(32, 160, 40, rgb(22, 43, 45), "PRESS ANY KEY");
         if (last_key >= 0) {
             snprintf(line, sizeof(line), "CODE %d", last_key);
-            text(24, 280, 80, rgb(105, 225, 165), line);
+            text(32, 280, 80, rgb(26, 105, 89), line);
         } else {
-            text(24, 300, 30, rgb(155, 170, 185), "Waiting for key...");
+            text(32, 300, 34, rgb(47, 69, 70), "Waiting for key...");
         }
-        text(24, 545, 28, rgb(230, 195, 90), "X / CANCEL = EXIT");
+        text(32, 545, 31, rgb(47, 69, 70), "X / CANCEL = EXIT");
     } else if (page == TOUCH) {
-        text(24, 130, 30, rgb(240, 240, 240), "TAP EVERY SQUARE");
+        text(32, 140, 35, rgb(22, 43, 45), "TAP EVERY SQUARE");
         for (i = 0; i < 9; ++i) {
-            squares[i].normal.btn_bg = touched[i] ? rgb(35, 130, 85)
-                                                   : rgb(42, 55, 72);
+            squares[i].normal.btn_bg = touched[i] ? rgb(190, 220, 202)
+                                                   : rgb(222, 230, 222);
             XuiButtonSetStat(squares[i].window, XUI_BTN_NORMAL,
                              &squares[i].normal);
         }
     } else if (page == LCD) {
-        text(24, 130, 30, rgb(240, 240, 240), "CHECK COLORS / PIXELS");
+        text(32, 140, 34, rgb(22, 43, 45), "CHECK COLORS / PIXELS");
         for (i = 0; i < 6; ++i) {
             int x = 24 + (i % 3) * 148;
             int y = 190 + (i / 3) * 210;
+            XuiCanvasDrawRect(body, x - 2, y - 2, 136, 149,
+                              rgb(169, 190, 184), 0, 1);
             XuiCanvasDrawRect(body, x, y, 132, 145, colors[i], 0, 1);
-            text(x, y + 155, 25, rgb(230, 230, 230), color_names[i]);
+            text(x, y + 155, 28, rgb(22, 43, 45), color_names[i]);
         }
     } else if (page == BEEP) {
-        text(24, 130, 30, rgb(240, 240, 240), "TAP A TONE");
+        text(32, 140, 35, rgb(22, 43, 45), "TAP A TONE");
         if (last_tone) {
             snprintf(line, sizeof(line), "TONE %d", last_tone);
-            text(24, 565, 36, rgb(105, 225, 165), line);
+            text(32, 565, 40, rgb(26, 105, 89), line);
         }
     } else {
         int battery = OsCheckBattery();
         int supply = OsCheckPowerSupply();
-        text(24, 145, 30, rgb(240, 240, 240), "BATTERY LEVEL");
+        text(32, 145, 35, rgb(22, 43, 45), "BATTERY LEVEL");
         if (battery >= 0 && battery < 8)
             snprintf(line, sizeof(line), "%s (%d)", battery_names[battery], battery);
         else if (battery == -1015) /* ERR_SYS_NOT_SUPPORT: no battery gauge. */
             snprintf(line, sizeof(line), "NOT SUPPORTED");
         else
             snprintf(line, sizeof(line), "ERROR %d", battery);
-        text(24, 205, 48, rgb(105, 225, 165), line);
-        text(24, 325, 30, rgb(240, 240, 240), "POWER SOURCE");
+        text(32, 205, 46, rgb(26, 105, 89), line);
+        text(32, 325, 35, rgb(22, 43, 45), "POWER SOURCE");
         snprintf(line, sizeof(line), "%s (%d)",
                  supply == 1 ? "ADAPTER" : supply == POWER_USB ? "USB" :
                  supply == POWER_BATTERY ? "BATTERY" :
                  supply == 4 ? "WIRELESS" : "UNKNOWN", supply);
-        text(24, 385, 42, rgb(105, 225, 165), line);
-        text(24, 535, 25, rgb(155, 170, 185), "OSAL POWER STATUS");
+        text(32, 385, 46, rgb(26, 105, 89), line);
+        text(32, 535, 29, rgb(47, 69, 70), "OSAL POWER STATUS");
     }
 }
 
@@ -181,6 +190,8 @@ int app_main(int argc, char **argv)
     if (XuiOpen(argc, argv) < 0)
         return 1;
     root = XuiRootCanvas();
+    if (root)
+        XuiCanvasSetBackground(root, XUI_BG_NORMAL, 0, rgb(207, 219, 216));
     font = XuiCreateFont("/usr/font/tm_font", 0, XUI_FONT_GREY);
     body = root ? XuiCreateCanvas(root, 0, 0, WIDTH, TABS_Y) : 0;
     if (!font || !body)
@@ -189,20 +200,20 @@ int app_main(int argc, char **argv)
 
     for (i = 0; i < PAGE_COUNT; ++i)
         if (make_button(&tabs[i], root, i * 96, TABS_Y, 96, 90,
-                        tab_names[i], TAB_KEY + i, rgb(48, 58, 70), 23) < 0)
+                        tab_names[i], TAB_KEY + i, rgb(222, 230, 222), 27) < 0)
             goto cleanup;
     if (make_button(&exit_button, body, 360, 67, 100, 48,
-                    "EXIT", EXIT_KEY, rgb(135, 45, 45), 24) < 0)
+                    "EXIT", EXIT_KEY, rgb(237, 207, 205), 28) < 0)
         goto cleanup;
     for (i = 0; i < 9; ++i)
         if (make_button(&squares[i], body, 24 + (i % 3) * 145,
                         195 + (i / 3) * 135, 130, 120,
-                        digits[i], ITEM_KEY + i, rgb(42, 55, 72), 48) < 0)
+                        digits[i], ITEM_KEY + i, rgb(222, 230, 222), 54) < 0)
             goto cleanup;
     for (i = 0; i < 7; ++i)
         if (make_button(&tones[i], body, 24 + (i % 4) * 110,
                         230 + (i / 4) * 165, 98, 125,
-                        digits[i], ITEM_KEY + i, rgb(45, 80, 120), 48) < 0)
+                        digits[i], ITEM_KEY + i, rgb(237, 215, 180), 54) < 0)
             goto cleanup;
 
     XuiClearKey();

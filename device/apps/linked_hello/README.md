@@ -1,6 +1,6 @@
 # 直接連結 XUI／OSAL 的螢幕範例
 
-`linked_hello` 使用 `app_main()`，直接呼叫 `Xui...` 和 `OsScrGetSize()`，沒有 `dlopen`／`dlsym`。在 480×800 的 Q80 上顯示大字 `Q80`、`LINKED`；60 秒後結束。
+`linked_hello` 使用 `app_main()`，直接呼叫 `Xui...` 和 `OsScrGetSize()`，沒有 `dlopen`／`dlsym`。在 480×800 的 Q80 上顯示 `Q80` 與「Q80 中文字顯示測試」；按任意實體鍵結束。
 
 先在專案根目錄準備編譯時使用的裝置原廠庫：
 

@@ -30,6 +30,15 @@
 #define ERR_NO_SPACE -2205
 #define ERR_NEED_ADMIN -2207
 
+/* This Q80's OsPrnOpen routes mode 0 to /dev/printer. */
+#define PRN_REAL 0
+#define ERR_PRN_BUSY -3701
+#define ERR_PRN_PAPEROUT -3702
+#define ERR_PRN_WRONG_PACKAGE -3703
+#define ERR_PRN_OVERHEAT -3704
+#define ERR_PRN_OUTOFMEMORY -3705
+#define ERR_PRN_OVERVOLTAGE -3706
+
 // RF
 #define PCD_ERR_PAR_FLAG -2901            // Parity error.
 #define PCD_ERR_CRC_FLAG -2902            // CRC error.

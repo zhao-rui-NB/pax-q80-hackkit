@@ -1,6 +1,6 @@
 # Q80 MAINAPP 選單
 
-原廠流程是 `pedd → keyman → runapp MAINAPP --system → MAINAPP`。本選單以 `app_main()` DLL 載入，掃描已安裝的 App；點選項目後先暫停 XUI，再呼叫原廠 `OsRunApp()`，子 App 結束後恢復選單。`SYSTEM SETTINGS (TM)` 可返回原廠 TM。
+原廠流程是 `pedd → keyman → runapp MAINAPP --system → MAINAPP`。本選單以 `app_main()` DLL 載入，掃描已安裝的 App，每頁顯示五個項目；點選項目後先暫停 XUI，再呼叫原廠 `OsRunApp()`，子 App 結束後恢復選單。`SYSTEM SETTINGS (TM)` 可返回原廠 TM。畫面依照實機參考設計：背景 #080B0F、App 卡片 #FFFFFF、卡片文字 #101010、SCAN #00C934、設定 #FF8700。頁碼與翻頁鍵使用深灰，標題與 App 名稱使用原廠 TM 字型的 XUI 粗體；App ID 保留原本大小寫與底線。
 
 ## 建置與部署
 
