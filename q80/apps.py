@@ -40,15 +40,28 @@ def run(session: Session, app: App) -> str:
     app_id = quote(app.app_id)
     tm_path = quote(f"/tmp/{app.app_id}.tm")
     stdout = quote(f"/tmp/{app.app_id}.stdout")
+    # On this Q80, the first tm restart after XUI exits draws only its header.
+    # keyman starts tm again after each exit; the second restart draws the menu.
+    watcher = (
+        f"/usr/bin/runapp {app_id}; RC=$?; "
+        f"TM=$(cat {tm_path} 2>/dev/null); "
+        'if [ -n "$TM" ]; then '
+        'kill -CONT $TM; kill -TERM $TM; '
+        'sleep 2; NEW=$(pidof tm); '
+        'if [ -n "$NEW" ] && [ "$NEW" != "$TM" ]; then kill -TERM $NEW; fi; '
+        'fi; '
+        f"rm -f {tm_path}; exit $RC"
+    )
     command = (
         "TM=$(pidof tm); "
         f"if [ -n \"$TM\" ]; then kill -STOP $TM; echo \"$TM\" > {tm_path}; fi; "
-        f"setsid /usr/bin/runapp {app_id} </dev/null >{stdout} 2>&1 & START=$!; "
+        f"setsid sh -c {quote(watcher)} </dev/null >{stdout} 2>&1 & START=$!; "
         "sleep 1; P=; for C in $(pidof runapp); do "
         f"if grep -aq {app_id} /proc/$C/cmdline; then P=$C; fi; done; "
         f"if [ -n \"$P\" ]; then echo APP_PID=$P; "
         f"else wait $START; RC=$?; TM=$(cat {tm_path} 2>/dev/null); "
-        "if [ -n \"$TM\" ]; then kill -CONT $TM; fi; "
+        "if [ -n \"$TM\" ]; then kill -CONT $TM; kill -TERM $TM; "
+        f"rm -f {tm_path}; fi; "
         "echo APP_EXIT_CODE=$RC; fi"
     )
     output = session.telnet.run(command).output
@@ -63,8 +76,9 @@ def stop(session: Session, app: App) -> str:
     command = (
         "for P in $(pidof runapp); do "
         f"if grep -aq {app_id} /proc/$P/cmdline; then kill -TERM $P; fi; done; "
+        "sleep 3; "
         f"TM=$(cat {tm_path} 2>/dev/null); "
-        "if [ -n \"$TM\" ]; then kill -CONT $TM; fi; "
+        "if [ -n \"$TM\" ]; then kill -CONT $TM; kill -TERM $TM; fi; "
         f"rm -f {tm_path}; echo APP_STOPPED"
     )
     output = session.telnet.run(command).output

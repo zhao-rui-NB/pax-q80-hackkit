@@ -1,0 +1,4 @@
+id = "hardware_test"
+name = "Hardware Test"
+version = "0.1.0"
+libraries = ["osal", "xui"]

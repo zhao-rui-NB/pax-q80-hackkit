@@ -1,0 +1,6 @@
+[app]
+id=MAINAPP
+name=Q80 App Menu
+bin=libq80_launcher.so
+file_type=dll
+version=0.1.0

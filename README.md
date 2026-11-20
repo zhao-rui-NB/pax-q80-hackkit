@@ -61,6 +61,7 @@ python -m q80 xcb reboot
 | `app new <name>` | 在 `device/apps/<name>/` 建立 `app.toml` 與最小 C 範本 |
 | `app build <name>` | 編譯 App 的 C 原始碼，產生 `build/<id>/<binary>`（預設為 SO） |
 | `app pack <name>` | 將已編好的 SO 與 App 資訊打包成 `build/<id>.aip` |
+| `mainapp build` | 編譯可啟動其他 App 的 MAINAPP 選單 |
 | `app-exe build <source.c> <output>` | 編譯有 `main()` 的 ARM 執行檔 |
 
 ### XCB 操作（不需要 Telnet）
@@ -97,6 +98,7 @@ python -m q80 xcb reboot
 | `app stop <name>` | 停止 App 並恢復 `tm` |
 | `app logs <name>` | 查看 App 的標準輸出 |
 | `app list` | 列出裝置上已安裝的 App |
+| `mainapp deploy` | 透過 Telnet 部署 MAINAPP 選單 |
 | `screenshot <output.png>` | 透過 Telnet 擷取螢幕並存成 PNG |
 
 使用 `python -m q80 --help` 或在命令後加 `--help` 查看完整參數。
@@ -121,3 +123,5 @@ python -m q80 xcb reboot
 
 需要螢幕顯示範例，可從 [screen_hello](device/apps/screen_hello/README.md) 開始。
 想直接連結裝置 XUI／OSAL 庫，可看 [linked_hello](device/apps/linked_hello/README.md)。
+分頁式硬體測試程式見 [hardware_test](device/apps/hardware_test/README.md)。
+要讓原廠啟動流程顯示可開啟其他 App 的選單，見 [MAINAPP 選單](device/apps/mainapp/README.md)。

@@ -19,4 +19,4 @@ python -m q80 app run linked_hello
 python -m q80 app stop linked_hello
 ```
 
-`app.toml` 的 `libraries = ["osal", "xui"]` 讓編譯器連結這兩份本機庫。產物只記錄 `libosal.so`、`libxui.so` 名稱，執行時由 Q80 載入 `/usr/lib` 的原廠庫；不把庫打包進 App。本機副本已被 Git 忽略。`app stop` 會恢復原廠 `tm` 畫面。
+`app.toml` 的 `libraries = ["osal", "xui"]` 讓編譯器連結這兩份本機庫。產物只記錄 `libosal.so`、`libxui.so` 名稱，執行時由 Q80 載入 `/usr/lib` 的原廠庫；不把庫打包進 App。本機副本已被 Git 忽略。App 自行結束時會恢復原廠 `tm` 畫面；`app stop` 可提前停止。

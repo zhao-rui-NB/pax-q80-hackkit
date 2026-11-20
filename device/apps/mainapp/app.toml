@@ -1,0 +1,4 @@
+id = "q80_launcher"
+name = "Q80 App Menu"
+version = "0.1.0"
+libraries = ["osal", "xui"]
