@@ -2,15 +2,16 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <xui.h>
 
-typedef int (*xui_open_fn)(int, char **);
-typedef void (*xui_close_fn)(void);
-typedef void *(*xui_root_fn)(void);
-typedef void *(*xui_font_fn)(char *, int, int);
-typedef void (*xui_destroy_font_fn)(void *);
-typedef void (*xui_background_fn)(void *, int, void *, unsigned long);
-typedef int (*xui_text_fn)(void *, unsigned int, unsigned int, unsigned int,
-                           void *, int, unsigned long, char *);
+/* Derive function pointer types from xui.h, then load the device library at runtime. */
+typedef __typeof__(&XuiOpen) xui_open_fn;
+typedef __typeof__(&XuiClose) xui_close_fn;
+typedef __typeof__(&XuiRootCanvas) xui_root_fn;
+typedef __typeof__(&XuiCreateFont) xui_font_fn;
+typedef __typeof__(&XuiDestroyFont) xui_destroy_font_fn;
+typedef __typeof__(&XuiCanvasSetBackground) xui_background_fn;
+typedef __typeof__(&XuiCanvasDrawText) xui_text_fn;
 
 int app_main(int argc, char **argv)
 {
@@ -19,7 +20,9 @@ int app_main(int argc, char **argv)
         "/lib/libm.so.6", "libfreetype.so.6", "libpng12.so.0",
         "libts-1.0.so.0"
     };
-    void *xui, *root, *font;
+    void *xui;
+    XuiWindow *root;
+    XuiFont *font;
     xui_open_fn open_xui;
     xui_close_fn close_xui;
     xui_root_fn root_canvas;
@@ -63,7 +66,7 @@ int app_main(int argc, char **argv)
         return 1;
     }
     root = root_canvas();
-    font = create_font("/usr/font/tm_font", 0, 1);
+    font = create_font("/usr/font/tm_font", 0, XUI_FONT_GREY);
     if (!root || !font) {
         puts("XUI canvas or font missing");
         if (font)
@@ -72,9 +75,11 @@ int app_main(int argc, char **argv)
         return 1;
     }
 
-    set_background(root, 0, 0, 0xff202020UL);
-    draw_text(root, 40, 150, 40, font, 0, 0xffffffffUL, "HELLO Q80");
-    draw_text(root, 40, 220, 24, font, 0, 0xffffffffUL, "Screen demo");
+    set_background(root, XUI_BG_NORMAL, 0, XuiColor(32, 32, 32, 255));
+    draw_text(root, 40, 150, 40, font, XUI_TEXT_NORMAL,
+              XuiColor(255, 255, 255, 255), "HELLO Q80");
+    draw_text(root, 40, 220, 24, font, XUI_TEXT_NORMAL,
+              XuiColor(255, 255, 255, 255), "Screen demo");
     sleep(10);
 
     destroy_font(font);

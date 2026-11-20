@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from q80 import aip, app_manifest, apps, build, diagnostics, installer, windows_main
+from q80 import aip, app_manifest, apps, build, diagnostics, installer, screenshot, windows_main
 from q80.config import ROOT, load
 from q80.log import configure, report_error, success
 from q80.system import aip_root, ped, preload
@@ -33,6 +33,7 @@ def _parser() -> _ArgumentParser:
     commands = parser.add_subparsers(dest="group", title="commands")
 
     commands.add_parser("doctor", help="show device status over Telnet")
+    commands.add_parser("screenshot", help="save the Q80 screen as a PNG").add_argument("output", type=Path)
     shell = commands.add_parser("shell", help="run a Telnet command")
     shell.add_argument("command", nargs=argparse.REMAINDER, help="remote command")
     xcb = commands.add_parser(
@@ -257,6 +258,8 @@ def execute(words: list[str], session: Session | None) -> int | None:
     session = _device_session(session)
     if args.group == "doctor":
         print(diagnostics.doctor(session), end="")
+    elif args.group == "screenshot":
+        screenshot.capture(session, args.output)
     elif args.group == "xcb":
         if args.action is None:
             _browse(session)

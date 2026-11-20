@@ -1,0 +1,4 @@
+id = "linked_hello"
+name = "Linked Hello"
+version = "0.1.0"
+libraries = ["osal", "xui"]

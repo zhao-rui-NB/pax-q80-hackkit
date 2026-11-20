@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Development and recovery tools for PAX Q80"
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+screenshot = ["Pillow>=10"]
+
 [project.scripts]
 q80 = "q80.cli:main"
 

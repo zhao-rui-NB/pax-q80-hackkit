@@ -17,7 +17,8 @@ def build(source: Path, output: Path, config: Config) -> None:
         raise FileNotFoundError(f"ARM sysroot missing: {SYSROOT}; run toolchain/setup.py first")
     output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([
-        config.compiler, f"--sysroot={SYSROOT}", "-std=gnu99", "-march=armv6", "-marm",
+        config.compiler, f"--sysroot={SYSROOT}", f"-I{ROOT / 'toolchain/include'}",
+        "-std=gnu99", "-march=armv6", "-marm",
         "-mfloat-abi=soft", "-Wl,--hash-style=sysv",
         "-Wl,--build-id=none", "-o", str(output), str(source),
     ], check=True)

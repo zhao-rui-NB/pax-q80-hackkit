@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 from q80.app_manifest import App
-from q80.config import Config
+from q80.config import Config, ROOT
 from q80.log import success
 
 
@@ -16,6 +16,7 @@ COMMON_FLAGS = [
     "-nostdlib", "-ffreestanding",
     "-fno-stack-protector", "-fno-asynchronous-unwind-tables",
     "-march=armv6", "-marm", "-mfloat-abi=soft", "-O2",
+    f"-I{ROOT / 'toolchain/include'}",
     "-Wl,--build-id=none",
 ]
 
@@ -31,12 +32,20 @@ def build(app: App, config: Config) -> Path:
     sources = sorted(app.folder.glob("*.c"))
     if not sources:
         raise FileNotFoundError(f"No C sources in {app.folder}")
+    device_libs = ROOT / "toolchain" / "device-libs"
+    for library in app.libraries:
+        path = device_libs / f"lib{library}.so"
+        if not path.is_file():
+            raise FileNotFoundError(f"Device library missing: {path}; pull it from /usr/lib")
     app.output.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([
+    command = [
         config.compiler, "-shared", "-fPIC", *COMMON_FLAGS,
         "-Wl,--hash-style=sysv", "-o", str(app.output),
         *map(str, sources),
-    ], check=True)
+    ]
+    if app.libraries:
+        command += [f"-L{device_libs}", *(f"-l{name}" for name in app.libraries)]
+    subprocess.run(command, check=True)
     _check_arm(app.output)
     success(log, "App built: %s", app.output)
     return app.output

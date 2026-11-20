@@ -6,6 +6,7 @@ toolchain/*.tar.*
 toolchain/*.part
 toolchain/compiler/
 toolchain/sysroot/
+toolchain/device-libs/
 backups/
 q80.toml
 *.aip

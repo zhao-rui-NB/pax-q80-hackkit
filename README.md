@@ -97,8 +97,11 @@ python -m q80 xcb reboot
 | `app stop <name>` | 停止 App 並恢復 `tm` |
 | `app logs <name>` | 查看 App 的標準輸出 |
 | `app list` | 列出裝置上已安裝的 App |
+| `screenshot <output.png>` | 透過 Telnet 擷取螢幕並存成 PNG |
 
 使用 `python -m q80 --help` 或在命令後加 `--help` 查看完整參數。
+
+擷取螢幕前安裝 Pillow：`python -m pip install pillow`。例如 `python -m q80 screenshot build/screen.png`。截圖使用實機 R／G／B 測試確認的色彩順序。
 
 ## 專案結構
 
@@ -117,3 +120,4 @@ python -m q80 xcb reboot
 有 `main()` 的 ARM 執行檔使用 `app-exe build`；`app_main` DLL 使用 `app build`。工具鏈來源與實機啟動方式見 [Windows main() 編譯](docs/windows-main.md)。
 
 需要螢幕顯示範例，可從 [screen_hello](device/apps/screen_hello/README.md) 開始。
+想直接連結裝置 XUI／OSAL 庫，可看 [linked_hello](device/apps/linked_hello/README.md)。

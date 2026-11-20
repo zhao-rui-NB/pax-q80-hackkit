@@ -20,6 +20,7 @@ class App:
     version: str
     name: str
     binary: str
+    libraries: tuple[str, ...] = ()
 
     @property
     def output(self) -> Path:
@@ -46,7 +47,8 @@ def load(name: str) -> App:
     if Path(binary).name != binary or not binary.endswith(".so"):
         raise ValueError("binary must be a .so filename")
     return App(folder, app_id, str(data.get("version", "0.1.0")),
-               str(data.get("name", app_id)), binary)
+               str(data.get("name", app_id)), binary,
+               tuple(data.get("libraries", [])))
 
 
 def create(name: str) -> Path:
