@@ -1,0 +1,4 @@
+id = "sketchpad"
+name = "Sketchpad"
+version = "0.1.0"
+libraries = ["osal", "xui"]

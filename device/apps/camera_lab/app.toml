@@ -1,0 +1,4 @@
+id = "camera_lab"
+name = "Camera Lab"
+version = "0.1.0"
+libraries = ["osal", "xui"]
