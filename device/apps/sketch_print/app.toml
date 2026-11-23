@@ -1,0 +1,4 @@
+id = "sketch_print"
+name = "Sketch & Print"
+version = "0.1.0"
+libraries = ["osal", "xui"]

@@ -210,6 +210,19 @@ static int add_test_image(void)
     return queue_canvas_image(work, IMAGE_WIDTH, IMAGE_HEIGHT, 384);
 }
 
+static int add_raster_text_comparison(void)
+{
+    XuiWindow *work = XuiCreateCanvas(screen, 0, 0, 384, 80);
+    if (!work)
+        return -1;
+    XuiCanvasSetBackground(work, XUI_BG_NORMAL, 0, rgb(255, 255, 255));
+    XuiCanvasDrawText(work, 16, 3, 48, font, XUI_TEXT_NORMAL,
+                      rgb(0, 0, 0), "SIZE 24x48");
+    XuiCanvasDrawRect(work, 16, 65, 352, 1, rgb(0, 0, 0), 0, 1);
+    XuiCanvasDrawRect(work, 16, 71, 352, 2, rgb(0, 0, 0), 0, 1);
+    return queue_canvas_image(work, 384, 80, 384);
+}
+
 static void print_test(enum Action action)
 {
     int opened, check, result;
@@ -247,6 +260,13 @@ static void print_test(enum Action action)
         OsPrnPrintf("SIZE 16x32\n");
         OsPrnSelectFontSize(24, 48, 48, 48);
         OsPrnPrintf("SIZE 24x48\n");
+        if (add_raster_text_comparison() < 0) {
+            OsPrnClose();
+            show_status("COMPARE PREP FAILED", "No paper was printed");
+            printf("Printer raster comparison preparation failed\n");
+            fflush(stdout);
+            return;
+        }
     } else if (action == CHINESE) {
         if (add_chinese_image() < 0) {
             OsPrnClose();
