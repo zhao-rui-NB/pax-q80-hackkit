@@ -8,6 +8,7 @@ B=/sys/devices/platform/iproc-bbl/brcm-iproc-bbl
 
 "$X" mount -t proc proc /proc 2>/dev/null
 echo "BEFORE=$("$X" cat "$P")"
+echo 0 > "$B/bbl_enable_all_dis" 2>/dev/null || true
 echo 0 > "$B/bbl_tmon_en_dis" || exit 1
 echo 1 > "$B/bbl_unlock_dis" || exit 1
 echo 0 > "$P" || exit 1
@@ -16,6 +17,7 @@ echo 0 > "$P" || exit 1
 "$X" chmod 755 /startup/bin/q80_patch_tamper || exit 1
 /startup/bin/q80_patch_tamper > /tmp/q80_patch_tamper.result || exit 1
 "$X" cat /tmp/q80_patch_tamper.result
+"$X" grep -q PEDD_HANDOFF_PATCH_OK /tmp/q80_patch_tamper.result || exit 1
 "$X" grep -q TAMPER_CLEAR_PTRACE_OK /tmp/q80_patch_tamper.result || exit 1
 "$X" rm -f /startup/bin/q80_patch_tamper
 
@@ -43,7 +45,12 @@ while [ "$waited" -lt 20 ]; do
     "$X" sleep 1
     waited=$((waited + 1))
 done
-echo "PEDD=$("$X" pidof pedd)"
-echo "KEYMAN=$("$X" pidof keyman)"
-echo "TM=$("$X" pidof tm)"
-[ -n "$("$X" pidof tm)" ] || exit 3
+PEDD=$("$X" pidof pedd)
+KEYMAN=$("$X" pidof keyman)
+TM=$("$X" pidof tm)
+RUN_APP=$("$X" pidof runapp)
+echo "PEDD=$PEDD"
+echo "KEYMAN=$KEYMAN"
+echo "TM=$TM"
+echo "RUN_APP=$RUN_APP"
+[ -n "$TM" ] || [ -n "$RUN_APP" ] || exit 3

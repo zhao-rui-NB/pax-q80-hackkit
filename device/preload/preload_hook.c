@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
@@ -9,6 +10,8 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "../ped/pedd_patch.h"
 
 /*
  * /data/etc/ld.so.preload 會把此 SO 載入每個動態連結的程序。
@@ -45,6 +48,24 @@ static int write_value(const char *path, const char *value)
     const int written = write(fd, value, size) == (ssize_t)size;
     (void)close(fd);
     return written ? 0 : -1;
+}
+
+static void clear_bbl_sensor_mask(void)
+{
+    /*
+     * servicemanager 執行時 pedd 尚未啟動，因此這時才能取得 /dev/bbl。
+     * 先清掉 sensor mask，避免 pedd 啟動前的舊 latch 被重新帶入。
+     */
+    unsigned int mask = 0;
+    const int fd = open("/dev/bbl", O_RDWR);
+    if (fd < 0) {
+        log_status("HOOK_BBL_OPEN_FAILED");
+        return;
+    }
+    const int result = ioctl(fd, 0x40046d02, &mask);
+    (void)close(fd);
+    log_status(result < 0 ? "HOOK_BBL_MASK_FAILED" :
+                             "HOOK_BBL_MASK_ZERO_OK");
 }
 
 static u32 find_mapping_base(char *maps, u32 size)
@@ -232,6 +253,8 @@ static void spawn_runtime(void)
 
 static void apply_boot_hook(void)
 {
+    static const char bbl_enable_all[] =
+        "/sys/devices/platform/iproc-bbl/brcm-iproc-bbl/bbl_enable_all_dis";
     static const char bbl_tmon[] =
         "/sys/devices/platform/iproc-bbl/brcm-iproc-bbl/bbl_tmon_en_dis";
     static const char bbl_unlock[] =
@@ -241,10 +264,15 @@ static void apply_boot_hook(void)
     log_status("HOOK_START");
     /*
      * /proc 供後續讀取 PID 1 的 fd 與 maps。
-     * 接著寫入既有的 sysfs 控制檔：bbl_tmon_en_dis=0、
+     * servicemanager 此時早於 pedd，先清 BBL sensor mask 並修補 pedd，
+     * 再寫入 bbl_enable_all_dis=0、bbl_tmon_en_dis=0、
      * bbl_unlock_dis=1、ped_trigger_state=0；沒有刪除任何節點。
      */
     (void)mount("proc", "/proc", "proc", 0, NULL);
+    clear_bbl_sensor_mask();
+    log_status(patch_pedd_handoff() == 0 ? "HOOK_PEDD_PATCH_OK" :
+                                           "HOOK_PEDD_PATCH_FAILED");
+    (void)write_value(bbl_enable_all, "0");
     (void)write_value(bbl_tmon, "0");
     (void)write_value(bbl_unlock, "1");
     (void)write_value(trigger, "0");

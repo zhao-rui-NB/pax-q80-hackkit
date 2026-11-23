@@ -131,7 +131,7 @@ sequenceDiagram
 
 ## 2. PED：處理本次開機
 
-實作：[ped.py](../q80/system/ped.py)、[bypass.sh](../device/ped/bypass.sh)、[patch_tamper.c](../device/ped/patch_tamper.c)。必須先執行 `aip-root start`。
+實作：[ped.py](../q80/system/ped.py)、[bypass.sh](../device/ped/bypass.sh)、[patch_tamper.c](../device/ped/patch_tamper.c)、[pedd_patch.h](../device/ped/pedd_patch.h)。必須先執行 `aip-root start`。
 
 ```mermaid
 flowchart TD
@@ -139,7 +139,7 @@ flowchart TD
     C --> U["上傳 patch、libosal 備份與 bypass.sh"]
     U --> S["daemon 執行 bypass.sh"]
     S --> V["寫 BBL/PED sysfs 的 0／1／0"]
-    V --> T["執行 patch_tamper：修改 PID 1 的 property"]
+    V --> T["執行 patch_tamper：修改 PID 1 的 property 與 /usr/bin/pedd"]
     T --> K["TERM pedd，等待 LCD／鍵盤／觸控 PED 狀態為 0"]
     K --> L["還原 libosal.so；等待 tm 啟動"]
 ```
@@ -147,10 +147,10 @@ flowchart TD
 | 階段 | 裝置路徑與操作 |
 | --- | --- |
 | 上傳 | 補丁到 `/tmp/q80_patch_tamper`；本機 `backups/libosal.so` 到 `/tmp/libosal.orig`；腳本由 `aip_root.run` 上傳為 `/tmp/q80_task_<token>.sh` |
-| 準備 | 腳本嘗試掛載 `/proc`；寫 `/sys/devices/platform/iproc-bbl/brcm-iproc-bbl/bbl_tmon_en_dis=0`、`/sys/devices/platform/iproc-bbl/brcm-iproc-bbl/bbl_unlock_dis=1`、`/sys/pax/ped_trigger_state=0` |
-| 修改 property | 補丁複製到 `/startup/bin/q80_patch_tamper` 執行；輸出存 `/tmp/q80_patch_tamper.result`；腳本檢查 `TAMPER_CLEAR_PTRACE_OK`，成功後刪除執行檔 |
+| 準備 | 腳本嘗試掛載 `/proc`；寫 `/sys/devices/platform/iproc-bbl/brcm-iproc-bbl/bbl_enable_all_dis=0`、`bbl_tmon_en_dis=0`、`bbl_unlock_dis=1`、`/sys/pax/ped_trigger_state=0` |
+| 修改 property 與 pedd | 補丁複製到 `/startup/bin/q80_patch_tamper` 執行；輸出存 `/tmp/q80_patch_tamper.result`；腳本檢查 `PEDD_HANDOFF_PATCH_OK` 與 `TAMPER_CLEAR_PTRACE_OK`，成功後刪除執行檔 |
 | 原廠服務 | 對 `pedd` 發送 TERM；最多等 20 秒，檢查 `/sys/devices/platform/lcd_fb/ped`、`/sys/devices/platform/keypad/ped`、`/sys/devices/platform/touch_panel/ped` 都為 `0` |
-| 收尾 | 把 `/tmp/libosal.orig` 經 `/usr/lib/libosal.so.new` 移回 `/usr/lib/libosal.so`；最多等 20 秒確認 `tm` 存在 |
+| 收尾 | 把 `/tmp/libosal.orig` 經 `/usr/lib/libosal.so.new` 移回 `/usr/lib/libosal.so`；最多等 20 秒確認 `tm` 或 `runapp MAINAPP` 存在 |
 
 `aip-root start` 已還原 `libosal.so`；`bypass.sh` 目前仍會再寫入一次本機備份。`ped status` 使用 Telnet 查 `ped_trigger_state` 與三個裝置的 PED 值；`ped bypass` 本身使用 XCB root 通道。
 
@@ -159,9 +159,22 @@ flowchart TD
 1. 讀滿 `/proc/1/fd/4` 的 32 KiB property area，找 `ro.fac.tamper_clear` 的紀錄偏移。此韌體的紀錄格式為名稱 32 位元組、serial 4 位元組（程式比對 `00 00 00 01`），value 位於紀錄起點加 36。
 2. 最多讀 8 KiB 的 `/proc/1/maps`，找 `/dev/__properties__` 的 `rw-s` 映射起點。目標位址是「映射起點 + 紀錄偏移 + 36」。
 3. 以 `ptrace(PTRACE_ATTACH)` 暫停 PID 1，`waitpid` 確認它已停止，再用 `PTRACE_POKEDATA` 寫入小端序 word `0x00000031`（字元 `1` 與三個 NUL），最後 `PTRACE_DETACH`。
-4. 再讀 property area，確認值是 `1`。成功時輸出 `TAMPER_CLEAR_PTRACE_OK` 並以狀態碼 0 結束；失敗則輸出對應標記並回傳非零。
+4. 再讀 property area，確認值是 `1`。
+5. 以 `open`／`pwrite`／`close` 修改 `/usr/bin/pedd` 的三個 word，成功時輸出 `PEDD_HANDOFF_PATCH_OK`。兩個階段都成功才輸出 `TAMPER_CLEAR_PTRACE_OK` 並以狀態碼 0 結束；失敗則輸出對應標記並回傳非零。
 
 `/proc/1/fd/4`、32 KiB 大小、`rw-s` 映射和 value 的 `+36` 偏移是此韌體的假設。補丁是獨立 ARM 執行檔；`-nostdlib` 略過一般啟動碼，由 C 寫的 `_start` 呼叫主流程，`-lc` 則讓它使用裝置現有的 `libc.so.6`。程式沒有手寫組合語言。
+
+### pedd 三點修補
+
+`pedd_patch.h` 只在 `/data/security` 的金鑰已被清成 0 bytes、`iSekVerify` 持續回報 CRC 錯誤時使用。三個位置屬於 2018 Q80 的 `pedd`，換韌體前必須重新確認：
+
+| offset | 寫入值 | 作用 |
+| --- | --- | --- |
+| `0xd904` | `0x00006d01` | 把初始化 BBL 的 sensor mask ioctl 改成 unlock |
+| `0x10160` | `0xe3a00000` | `vAttackTrigger` 入口改為 `mov r0, #0` |
+| `0x10164` | `0xe12fff1e` | `vAttackTrigger` 直接 `bx lr` 返回 |
+
+三點修補讓原廠 `pedd` 仍能完成 `keyman`／`runapp`／`tm` 交棒，但會停用 tamper response，且不會恢復 TLK/TMK/TWK/DUKPT 或支付功能。只適合維修與研究機。`bypass.sh` 會在 TERM `pedd` 前完成修補，init 重新啟動時才會載入新內容。
 
 ## 3. Preload：每次開機自動執行
 
@@ -196,16 +209,16 @@ flowchart TD
 flowchart TD
     L["動態載入器依 ld.so.preload 載入 hook"] --> C{"程序名稱是 servicemanager？"}
     C -- 否 --> N["constructor 返回"]
-    C -- 是 --> M["掛載 /proc；寫 BBL/PED 控制值"]
-    M --> P["修改 PID 1 的 ro.fac.tamper_clear"]
+    C -- 是 --> M["掛載 /proc；清 BBL sensor mask；修補 /usr/bin/pedd"]
+    M --> P["寫 BBL/PED 控制值；修改 PID 1 的 ro.fac.tamper_clear"]
     P --> B["sendfile 複製 /data/opt/q80_boot/busybox 到 /usr/bin/busybox"]
     B --> F["fork 子程序執行 q80_boot_runtime.sh"]
     F --> T["runtime 啟動 Telnet"]
 ```
 
-`preload_hook.so` 會被動態載入器放進多個程序，但 constructor 只在程序名稱為 `servicemanager` 時執行開機操作。它把 `bbl_tmon_en_dis`、`bbl_unlock_dis`、`ped_trigger_state` 分別寫為 `0／1／0`，再用與 `patch_tamper.c` 相同的 PID 1 property 定位和 `ptrace` 方法把值改成 `1`。
+`preload_hook.so` 會被動態載入器放進多個程序，但 constructor 只在程序名稱為 `servicemanager` 時執行開機操作。此時 `pedd` 尚未啟動，hook 先對 `/dev/bbl` 送出 mask `0`，再套用 `pedd_patch.h` 的三點修補。接著把 `bbl_enable_all_dis`、`bbl_tmon_en_dis`、`bbl_unlock_dis`、`ped_trigger_state` 分別寫為 `0／0／1／0`，再用與 `patch_tamper.c` 相同的 PID 1 property 定位和 `ptrace` 方法把 `ro.fac.tamper_clear` 改成 `1`。
 
-hook 將階段標記附加到 `/data/tmp/q80_boot_hook.log`。它從持久的 `/data/opt/q80_boot/busybox` 複製到 `/usr/bin/busybox`，fork 子程序執行 `/data/opt/q80_boot/q80_boot_runtime.sh`。runtime 將輸出寫到 `/data/tmp/q80_boot_runtime.log`，停止舊 `telnetd`，建立 `/usr/bin/sh` 連結，再以設定的埠啟動 Telnet。`HOOK_RUNTIME_SPAWNED` 只表示 hook 走到啟動階段；實際服務仍應查 runtime log 或 Telnet 連線。
+hook 將階段標記附加到 `/data/tmp/q80_boot_hook.log`，包含 `HOOK_BBL_MASK_ZERO_OK`、`HOOK_PEDD_PATCH_OK` 與 `HOOK_TAMPER_CLEAR_OK`。它從持久的 `/data/opt/q80_boot/busybox` 複製到 `/usr/bin/busybox`，fork 子程序執行 `/data/opt/q80_boot/q80_boot_runtime.sh`。runtime 將輸出寫到 `/data/tmp/q80_boot_runtime.log`，停止舊 `telnetd`，建立 `/usr/bin/sh` 連結，再以設定的埠啟動 Telnet。`HOOK_RUNTIME_SPAWNED` 只表示 hook 走到啟動階段；實際服務仍應查 runtime log 或 Telnet 連線。
 
 ### restore
 
@@ -213,7 +226,7 @@ hook 將階段標記附加到 `/data/tmp/q80_boot_hook.log`。它從持久的 `/
 
 ## 共通相依與排查位置
 
-`patch_tamper` 和 `preload_hook` 都使用編譯器的 `-nostdlib` 略過預設啟動檔，並明確用 `-lc` 連結 libc。產物在裝置上由 `/lib/ld-linux.so.3`／`libc.so.6` 提供 C 函式；目前兩者要求的符號版本為 `GLIBC_2.4`。`root_cmd.so` 是由 installer 載入的共享庫，C 函式符號由載入程序解析。
+`patch_tamper` 和 `preload_hook` 都使用編譯器的 `-nostdlib` 略過預設啟動檔，並明確用 `-lc` 連結 libc。產物在裝置上由 `/lib/ld-linux.so.3`／`libc.so.6` 提供 C 函式；目前兩者要求的符號版本為 `GLIBC_2.4`。`pedd_patch.h` 使用 libc 的 `open`、`pwrite` 與 `close`，沒有自行封裝 syscall。`root_cmd.so` 是由 installer 載入的共享庫，C 函式符號由載入程序解析。
 
 | 要檢查的流程 | 位置 |
 | --- | --- |

@@ -5,11 +5,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "pedd_patch.h"
+
 /*
- * 只處理本次開機的 ro.fac.tamper_clear。
- * PID 1 持有 Android property area，這個 ro.* 值不能透過一般 property setter 更新。
+ * 處理本次開機的 ro.fac.tamper_clear，並修補 /usr/bin/pedd 的三個 handoff
+ * 位置。PID 1 持有 Android property area，這個 ro.* 值不能透過一般
+ * property setter 更新。
  * 流程：讀取 PID 1 的 property 檔案找紀錄偏移 → 查 PID 1 的映射起點 →
- *       暫停 PID 1 並修改其記憶體 → 重新讀取 property 檔案確認結果。
+ *       暫停 PID 1 並修改其記憶體 → 重新讀取 property 檔案確認結果 →
+ *       以 libc 的 pwrite 修改 pedd。
  * /proc/1/fd/4、檔案大小和紀錄格式都是此韌體的假設；換韌體需要重新確認。
  */
 typedef unsigned int u32;
@@ -128,6 +132,8 @@ int patch_tamper_clear(void)
     static const char wait_error[] = "TAMPER_CLEAR_PTRACE_WAIT_ERROR\n";
     static const char post_verify_error[] = "TAMPER_CLEAR_PTRACE_POST_VERIFY_ERROR\n";
     static const char write_error[] = "TAMPER_CLEAR_PTRACE_WRITE_ERROR\n";
+    static const char pedd_ok[] = "PEDD_HANDOFF_PATCH_OK\n";
+    static const char pedd_error[] = "PEDD_HANDOFF_PATCH_ERROR\n";
     char maps[8192];
     char area[32768];
     long maps_fd;
@@ -207,6 +213,16 @@ int patch_tamper_clear(void)
         (void)write(STDOUT_FILENO, post_verify_error, sizeof(post_verify_error) - 1);
         return 1;
     }
+    /*
+     * bypass.sh 會在成功後對 pedd 送出 TERM；init 重新啟動 pedd 時才會載入
+     * 剛寫入的檔案。三點修補必須在重啟前完成，否則 CRC 錯誤會再次鎖回
+     * LCD、鍵盤與觸控。
+     */
+    if (patch_pedd_handoff() != 0) {
+        (void)write(STDOUT_FILENO, pedd_error, sizeof(pedd_error) - 1);
+        return 1;
+    }
+    (void)write(STDOUT_FILENO, pedd_ok, sizeof(pedd_ok) - 1);
     (void)write(STDOUT_FILENO, ok, sizeof(ok) - 1);
     return 0;
 }

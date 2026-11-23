@@ -40,6 +40,8 @@ python -m q80 ped bypass
 python -m q80 aip-root stop
 ```
 
+`ped bypass` 會在重啟 `pedd` 前套用三點 `pedd` 修補，因此也能處理 secure key 已被清成 0 bytes 的機器。這個修補會停用 tamper response，且不會恢復已清除的金鑰；只適合維修與研究機。
+
 若要安裝每次開機執行的 hook：
 
 ```powershell
