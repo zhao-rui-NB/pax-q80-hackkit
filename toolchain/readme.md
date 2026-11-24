@@ -12,7 +12,7 @@ python -m pip install tqdm
 python toolchain/setup.py
 ```
 
-腳本會下載兩份壓縮檔到 `toolchain/`，用 `tqdm` 顯示下載與解壓進度，並呼叫 `extract.py` 解出編譯需要的檔案。
+腳本會補齊編譯器和 sysroot。需要解壓時，會先核對壓縮檔的固定 SHA-256，再用 `tqdm` 顯示下載與解壓進度。
 
 | 來源 | 解出位置 | 用途 |
 | --- | --- | --- |
@@ -23,4 +23,4 @@ sysroot 只取原套件 `arm-2012.03/arm-none-linux-gnueabi/libc/` 下的 `lib/`
 
 Q80 的 XUI／OSAL C API 宣告與使用限制見 [include/README.md](include/README.md)。
 
-若 App 要直接連結裝置庫，先依 [linked_hello 範例](../device/apps/linked_hello/README.md) 將 Q80 的 `libosal.so`、`libxui.so` 複製到 `toolchain/device-libs/`。這些本機副本只供編譯連結，不會打包進 App，且已被 Git 忽略。
+`toolchain/device-libs/libosal.so` 和 `toolchain/device-libs/libxui.so` 隨 Git checkout 提供，只供編譯連結。Q80 執行時使用裝置上的函式庫。準備工具鏈與建置 App 都可以在沒有 Q80 連線的情況下進行。
