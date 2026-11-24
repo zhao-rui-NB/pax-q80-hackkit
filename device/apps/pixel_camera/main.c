@@ -1,325 +1,356 @@
-/* Camera snapshots converted to full-width monochrome thermal prints. */
+/* Q80 camera and full-width monochrome thermal photo preview. */
 #include <osal.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <xui.h>
+
+#include "raster.h"
 
 #define PIXEL_PATH "/data/app/pixel_camera/latest_pixel.png"
 #define CAMERA_640_480 1
 #define PREVIEW_75 1
 #define PRINT_WIDTH 384
-#define PRINT_HEIGHT 288
-#define CELL_SIZE 3
-#define CELL_COLS (PRINT_WIDTH / CELL_SIZE)
-#define CELL_ROWS (PRINT_HEIGHT / CELL_SIZE)
+#define WIDE_HEIGHT 288
+#define TALL_HEIGHT 512
+#define SOURCE_WIDTH 640
+#define SOURCE_HEIGHT 480
+#define LIVE_WIDTH 320
+#define LIVE_HEIGHT 240
+#define LIVE_SCREEN_WIDTH 480
+#define LIVE_SCREEN_HEIGHT 360
+#define VIEW_Y 74
+#define VIEW_HEIGHT TALL_HEIGHT
+#define KEYPAD_Y 594
+#define ROW_STEP 47
+#define KEY_WIDTH 140
+#define KEY_HEIGHT 42
 #define ROW_BYTES (PRINT_WIDTH / 8)
 #define CHUNK_HEIGHT 144
+#define MANUAL_FEED_DOTS 96
 #define PACKET_SIZE (1 + CHUNK_HEIGHT * (2 + ROW_BYTES))
-#define SNAP_KEY 1001
-#define PRINT_KEY 1002
-#define RETAKE_KEY 1003
-#define EXIT_KEY 1004
-#define MODE_KEY 1005
+#define LIVE_INTERVAL_MS 100
+#define ACTION_DELAY_MS 900
+#define ADJUST_STEP 8
+#define ADJUST_LIMIT 64
 
-enum PrintMode { BOLD_MODE, SHADE_MODE };
+enum PhotoState { CAMERA_IDLE, CAMERA_LIVE, PHOTO_REVIEW };
+enum ButtonId {
+    MODE, LAYOUT, FACE, LIGHTER, DARKER, CELL, DENSITY, FEED,
+    RETURN_LIVE, ACTION, EXIT, BUTTON_COUNT
+};
+
+#define BUTTON_KEY 1100
 
 typedef struct {
     XuiWindow *window;
     XuiButtonStat normal;
-    XuiButtonStat pressed;
 } Button;
 
-static XuiWindow *screen;
-static XuiWindow *camera;
-static XuiWindow *pixel_canvas;
+static XuiWindow *screen, *camera, *photo_canvas, *live_canvas;
 static XuiFont *font;
-static XuiImg *preview_image;
-static Button snap_button;
-static Button print_button;
-static Button retake_button;
-static Button exit_button;
-static Button mode_button;
-static unsigned char bitmap[PRINT_HEIGHT * ROW_BYTES];
+static XuiImg *photo_image, *live_image;
+static Button buttons[BUTTON_COUNT];
+static unsigned char snapshot[SOURCE_WIDTH * SOURCE_HEIGHT];
+static unsigned char face_gray[SOURCE_WIDTH * SOURCE_HEIGHT];
+static unsigned char gray[PRINT_WIDTH * TALL_HEIGHT];
+static unsigned char rgba[SOURCE_WIDTH * SOURCE_HEIGHT * 4];
+static unsigned char bitmap[ROW_BYTES * TALL_HEIGHT];
 static unsigned char packet[PACKET_SIZE];
-static unsigned char gray[PRINT_WIDTH * PRINT_HEIGHT];
-static unsigned char cell_gray[CELL_COLS * CELL_ROWS];
-static int bitmap_ready;
-static enum PrintMode print_mode = BOLD_MODE;
+static enum PhotoState state = CAMERA_IDLE;
+static enum PhotoLayout layout = PHOTO_WIDE;
+static enum PixelMode mode = PIXEL_SHADE;
+static int cell_size = 3;
+static int print_density = 4;
+static int adjustment, face_enabled, live_corrected, bitmap_ready, print_height;
+static unsigned long last_live_ms, action_ms;
 
 static int rgb(int red, int green, int blue)
 {
     return (int)XuiColor(blue, green, red, 255);
 }
 
-static void status(const char *message)
+static unsigned long millis(void)
 {
-    XuiCanvasDrawRect(screen, 20, 519, 440, 70, rgb(47, 55, 64), 1, 1);
-    XuiCanvasDrawText(screen, 33, 535, 31, font, XUI_BOLD,
-                      rgb(255, 255, 255), (char *)message);
+    struct timeval now = {0};
+    gettimeofday(&now, NULL);
+    return (unsigned long)now.tv_sec * 1000 + (unsigned long)now.tv_usec / 1000;
 }
 
-static int make_button(Button *button, int x, int y, int width, const char *label,
-                       int key, int background, int pressed_background,
-                       int foreground)
+static void text(int x, int y, int size, int color, const char *label)
 {
-    button->window = XuiCreateButton(screen, x, y, width, 72);
-    if (!button->window)
-        return -1;
-    button->normal = (XuiButtonStat){0};
+    XuiCanvasDrawText(screen, x, y, size, font, XUI_BOLD, color, (char *)label);
+}
+
+static void status(const char *message)
+{
+    int size = 17;
+    while (size > 13 && XuiTextWidthEx(font, size, XUI_BOLD, (char *)message) > 240)
+        --size;
+    XuiCanvasDrawRect(screen, 16, 46, 260, 24, rgb(43, 53, 65), 1, 1);
+    text(25, 46 + (24 - size) / 2, size, rgb(255, 255, 255), message);
+}
+
+static void set_button(enum ButtonId id, const char *label, int background, int foreground)
+{
+    Button *button = &buttons[id];
+    XuiButtonStat pressed;
+    int size = 21;
+    int width = XuiTextWidthEx(font, size, XUI_TEXT_NORMAL, (char *)label);
+    while (width > button->window->width - 10 && size > 15)
+        width = XuiTextWidthEx(font, --size, XUI_TEXT_NORMAL, (char *)label);
     button->normal.btn_round = 1;
     button->normal.btn_bg = background;
     button->normal.text = (char *)label;
     button->normal.text_fg = foreground;
     button->normal.text_font = font;
-    button->normal.text_x = 17;
-    button->normal.text_y = 18;
-    button->normal.text_height = 34;
-    button->pressed = button->normal;
-    button->pressed.btn_bg = pressed_background;
-    if (XuiButtonSetStat(button->window, XUI_BTN_NORMAL,
-                         &button->normal) < 0 ||
-        XuiButtonSetStat(button->window, XUI_BTN_PRESSED,
-                         &button->pressed) < 0 ||
-        XuiButtonSetKey(button->window, key) < 0)
+    button->normal.text_x = width > 0 && width < button->window->width
+                            ? (button->window->width - width) / 2 : 4;
+    button->normal.text_y = (button->window->height - size) / 2;
+    button->normal.text_height = size;
+    pressed = button->normal;
+    pressed.btn_bg = rgb(191, 207, 218);
+    pressed.text_fg = rgb(16, 24, 32);
+    XuiButtonSetStat(button->window, XUI_BTN_NORMAL, &button->normal);
+    XuiButtonSetStat(button->window, XUI_BTN_PRESSED, &pressed);
+}
+
+static int make_button(enum ButtonId id, int x, int y, int width, int height)
+{
+    Button *button = &buttons[id];
+    button->window = XuiCreateButton(screen, x, y, width, height);
+    if (!button->window || XuiButtonSetKey(button->window, BUTTON_KEY + id) < 0)
         return -1;
     XuiShowWindow(button->window, 1, 0);
     return 0;
 }
 
-static void mark_pixel(unsigned char *rgba, int x, int y, int black)
+static void draw_controls(void)
 {
-    int offset = (y * PRINT_WIDTH + x) * 4;
-    unsigned char value = black ? 0 : 255;
-    rgba[offset] = value;
-    rgba[offset + 1] = value;
-    rgba[offset + 2] = value;
-    rgba[offset + 3] = 255;
-    if (black)
-        bitmap[y * ROW_BYTES + x / 8] |= (unsigned char)(0x80 >> (x & 7));
+    int blue = rgb(38, 76, 112), white = rgb(255, 255, 255);
+    int ink = rgb(16, 24, 32), gray_color = rgb(58, 70, 84);
+    char value[48];
+    static const char *const mode_labels[] = {"1 SHADE", "1 CLUSTER", "1 BOLD"};
+    static const char *const cell_labels[] = {"5 2x2", "5 3x3", "5 4x4"};
+    const char *density_label = print_density == 1 ? "7 DENS 1" :
+                                print_density == 3 ? "7 DENS 3" : "7 DENS 4";
+    set_button(MODE, mode_labels[mode], blue, white);
+    set_button(CELL, cell_labels[cell_size - 2], mode == PIXEL_BOLD ? gray_color : blue, white);
+    set_button(LAYOUT, layout == PHOTO_TALL ? "2 TALL" : "2 WIDE", blue, white);
+    set_button(FACE, "3 FACE", face_enabled ? blue : gray_color, white);
+    set_button(DENSITY, density_label, blue, white);
+    set_button(FEED, "8 FEED", gray_color, white);
+    set_button(LIGHTER, "4 LIGHTER", white, ink);
+    set_button(DARKER, "6 DARKER", white, ink);
+    set_button(RETURN_LIVE, state == PHOTO_REVIEW ? "RETAKE" : "LIVE",
+               rgb(255, 135, 0), ink);
+    set_button(ACTION, state == PHOTO_REVIEW ? "PRINT" : "SNAP",
+               rgb(0, 201, 52), ink);
+    set_button(EXIT, "EXIT", rgb(195, 35, 49), white);
+    XuiCanvasDrawRect(screen, 324, KEYPAD_Y + 2 * ROW_STEP, KEY_WIDTH, KEY_HEIGHT,
+                      rgb(26, 34, 44), 1, 1);
+    snprintf(value, sizeof(value), "%s %+d", mode == PIXEL_BOLD ? "THR" : "INK", adjustment);
+    text(340, KEYPAD_Y + 2 * ROW_STEP + 12, 18, white, value);
+    XuiCanvasDrawRect(screen, 286, 46, 178, 24, rgb(26, 34, 44), 1, 1);
+    snprintf(value, sizeof(value), "384 x %d", layout == PHOTO_TALL ? TALL_HEIGHT : WIDE_HEIGHT);
+    text(297, 49, 17, rgb(173, 191, 211), value);
 }
 
-static int luminance_at(const unsigned char *source, int x, int y)
+static int capture_rgba(int width, int height)
 {
-    int offset = (y * PRINT_WIDTH + x) * 4;
-    return (77 * source[offset] + 150 * source[offset + 1] +
-            29 * source[offset + 2]) / 256;
-}
-
-static int blurred_luminance(const unsigned char *source, int x, int y)
-{
-    int dx, dy, nx, ny, sum = 0, count = 0;
-    for (dy = -1; dy <= 1; ++dy) {
-        ny = y + dy;
-        if (ny < 0 || ny >= PRINT_HEIGHT)
-            continue;
-        for (dx = -1; dx <= 1; ++dx) {
-            nx = x + dx;
-            if (nx < 0 || nx >= PRINT_WIDTH)
-                continue;
-            sum += luminance_at(source, nx, ny);
-            ++count;
+    XuiImg *image = XuiCameraCapture(camera);
+    int result = -1;
+    if (!image) return -1;
+    int needs_resize = image->width != width || image->height != height;
+    if ((!needs_resize || XuiImgResize(image, width, height) >= 0) &&
+        XuiImgToRgba(image, (char *)rgba) >= 0) {
+        int x, y;
+        for (y = 0; y < height; ++y) {
+            for (x = 0; x < width / 2; ++x) {
+                unsigned char *left = rgba + (y * width + x) * 4;
+                unsigned char *right = rgba + (y * width + width - 1 - x) * 4;
+                unsigned char pixel[4];
+                memcpy(pixel, left, 4);
+                memcpy(left, right, 4);
+                memcpy(right, pixel, 4);
+            }
         }
+        result = 0;
     }
-    return sum / count;
+    XuiImgFree(image);
+    return result;
 }
 
-static int image_threshold(const unsigned int *histogram)
+static unsigned char luminance(const unsigned char *pixel)
 {
-    int level, total = PRINT_WIDTH * PRINT_HEIGHT;
-    int total_sum = 0, background_count = 0, background_sum = 0;
-    int best_threshold = 128, best_score = -1;
-    for (level = 0; level < 256; ++level)
-        total_sum += level * (int)histogram[level];
-    for (level = 0; level < 256; ++level) {
-        int foreground_count, mean_background, mean_foreground;
-        int difference, score;
-        background_count += (int)histogram[level];
-        background_sum += level * (int)histogram[level];
-        foreground_count = total - background_count;
-        if (background_count < 256 || foreground_count < 256)
-            continue;
-        mean_background = background_sum / background_count;
-        mean_foreground = (total_sum - background_sum) / foreground_count;
-        difference = mean_foreground - mean_background;
-        score = (background_count / 256) * (foreground_count / 256) *
-                (difference * difference / 256);
-        if (score > best_score) {
-            best_score = score;
-            best_threshold = (mean_background + mean_foreground) / 2;
-        }
-    }
-    return best_threshold;
+    return (unsigned char)((77 * pixel[0] + 150 * pixel[1] + 29 * pixel[2]) / 256);
 }
 
-static void prepare_gray(const unsigned char *source)
+static int capture_gray(void)
+{
+    int i;
+    if (capture_rgba(SOURCE_WIDTH, SOURCE_HEIGHT) < 0) return -1;
+    for (i = 0; i < SOURCE_WIDTH * SOURCE_HEIGHT; ++i)
+        snapshot[i] = luminance(rgba + i * 4);
+    return 0;
+}
+
+static int draw_bitmap(XuiWindow *canvas, XuiImg **previous, const unsigned char *bits,
+                       int width, int height)
 {
     int x, y;
-    for (y = 0; y < PRINT_HEIGHT; ++y)
-        for (x = 0; x < PRINT_WIDTH; ++x)
-            gray[y * PRINT_WIDTH + x] =
-                (unsigned char)blurred_luminance(source, x, y);
-}
-
-static void high_contrast(unsigned char *output)
-{
-    unsigned int histogram[256] = {0};
-    int x, y, value, threshold;
-    for (y = 0; y < PRINT_HEIGHT; ++y)
-        for (x = 0; x < PRINT_WIDTH; ++x) {
-            value = gray[y * PRINT_WIDTH + x];
-            ++histogram[value];
+    XuiImg *image;
+    if (width > canvas->width || height > canvas->height) return -1;
+    for (y = 0; y < height; ++y) {
+        for (x = 0; x < width; ++x) {
+            int pos = (y * width + x) * 4;
+            unsigned char value = bits[y * (width / 8) + x / 8] & (0x80 >> (x % 8)) ? 0 : 255;
+            rgba[pos] = rgba[pos + 1] = rgba[pos + 2] = value;
+            rgba[pos + 3] = 255;
         }
-    threshold = image_threshold(histogram);
-    memset(bitmap, 0, sizeof(bitmap));
-    for (y = 0; y < PRINT_HEIGHT; ++y)
-        for (x = 0; x < PRINT_WIDTH; ++x)
-            mark_pixel(output, x, y,
-                       gray[y * PRINT_WIDTH + x] < threshold);
-}
-
-static int cell_black_dots(int luminance)
-{
-    int dots;
-    if (luminance > 255)
-        luminance = 255;
-    dots = ((255 - luminance) * 9 + 127) / 255;
-    if (dots == 1)
-        dots = 0;
-    if (dots > 8)
-        dots = 8;
-    return dots;
-}
-
-static void shade_dots(unsigned char *output)
-{
-    /* The number of connected dots in each 3x3 cell represents gray. */
-    static const unsigned char rank[3][3] = {
-        {0, 4, 1},
-        {6, 8, 5},
-        {2, 7, 3},
-    };
-    int cx, cy, dx, dy, sum, lift, used_lift = 0, dots, total_dots;
-    for (cy = 0; cy < CELL_ROWS; ++cy)
-        for (cx = 0; cx < CELL_COLS; ++cx) {
-            sum = 0;
-            for (dy = 0; dy < CELL_SIZE; ++dy)
-                for (dx = 0; dx < CELL_SIZE; ++dx)
-                    sum += gray[(cy * CELL_SIZE + dy) * PRINT_WIDTH +
-                                cx * CELL_SIZE + dx];
-            cell_gray[cy * CELL_COLS + cx] = (unsigned char)(sum / 9);
-        }
-    for (lift = 0; lift <= 80; lift += 8) {
-        total_dots = 0;
-        used_lift = lift;
-        for (cy = 0; cy < CELL_ROWS; ++cy)
-            for (cx = 0; cx < CELL_COLS; ++cx)
-                total_dots += cell_black_dots(
-                    cell_gray[cy * CELL_COLS + cx] + lift);
-        if (total_dots <= PRINT_WIDTH * PRINT_HEIGHT * 45 / 100)
-            break;
     }
-    memset(bitmap, 0, sizeof(bitmap));
-    for (cy = 0; cy < CELL_ROWS; ++cy)
-        for (cx = 0; cx < CELL_COLS; ++cx) {
-            dots = cell_black_dots(cell_gray[cy * CELL_COLS + cx] + used_lift);
-            for (dy = 0; dy < CELL_SIZE; ++dy)
-                for (dx = 0; dx < CELL_SIZE; ++dx)
-                    mark_pixel(output, cx * CELL_SIZE + dx,
-                               cy * CELL_SIZE + dy,
-                               rank[dy][dx] >= 9 - dots);
-        }
-    printf("Pixel shade lift=%d black=%d\n", used_lift, total_dots);
-    fflush(stdout);
+    image = XuiRgbaToImg((char *)rgba, width * height * 4, width, height);
+    if (!image) return -1;
+    XuiCanvasDrawRect(canvas, 0, 0, canvas->width, canvas->height, rgb(25, 33, 44), 0, 1);
+    if (XuiCanvasDrawImg(canvas, (canvas->width - width) / 2,
+                         (canvas->height - height) / 2, width, height,
+                         XUI_BG_NORMAL, image) < 0) {
+        XuiImgFree(image);
+        return -1;
+    }
+    if (XuiImgSaveToFile(image, PIXEL_PATH) < 0)
+        puts("Pixel Camera could not save the preview");
+    if (*previous) XuiImgFree(*previous);
+    *previous = image;
+    return 0;
 }
 
-static int prepare_snapshot(void)
+static int render_photo(void)
 {
-    XuiImg *captured = NULL;
-    XuiImg *generated = NULL;
-    XuiImg *loaded = NULL;
-    unsigned char *source = NULL;
-    unsigned char *output = NULL;
-    int result = -1;
+    print_height = layout == PHOTO_TALL ? TALL_HEIGHT : WIDE_HEIGHT;
+    bitmap_ready = 0;
+    const unsigned char *source = snapshot;
+    if (face_enabled) {
+        pixel_lift_center(snapshot, SOURCE_WIDTH, SOURCE_HEIGHT, face_gray);
+        source = face_gray;
+    }
+    pixel_convert(source, SOURCE_WIDTH, SOURCE_HEIGHT, PRINT_WIDTH, print_height,
+                  layout, mode, adjustment, cell_size, gray, bitmap);
+    if (draw_bitmap(photo_canvas, &photo_image, bitmap, PRINT_WIDTH, print_height) < 0)
+        return -1;
+    bitmap_ready = 1;
+    return 0;
+}
 
-    captured = XuiCameraCapture(camera);
-    if (!captured)
-        goto cleanup;
-    if (XuiImgResize(captured, PRINT_WIDTH, PRINT_HEIGHT) < 0)
-        goto cleanup;
-    source = malloc(PRINT_WIDTH * PRINT_HEIGHT * 4);
-    output = malloc(PRINT_WIDTH * PRINT_HEIGHT * 4);
-    if (!source || !output)
-        goto cleanup;
-    if (XuiImgToRgba(captured, (char *)source) < 0)
-        goto cleanup;
-    prepare_gray(source);
-    if (print_mode == BOLD_MODE)
-        high_contrast(output);
-    else
-        shade_dots(output);
-    generated = XuiRgbaToImg((char *)output,
-                             PRINT_WIDTH * PRINT_HEIGHT * 4,
-                             PRINT_WIDTH, PRINT_HEIGHT);
-    if (!generated || XuiImgSaveToFile(generated, PIXEL_PATH) < 0)
-        goto cleanup;
-    loaded = XuiImgLoadFromFile(PIXEL_PATH);
-    if (!loaded || XuiImgResize(loaded, 480, 360) < 0)
-        goto cleanup;
-    XuiCanvasSetBackground(pixel_canvas, XUI_BG_NORMAL, 0, rgb(255, 255, 255));
-    if (XuiCanvasDrawImg(pixel_canvas, 0, 0, 480, 360,
-                         XUI_BG_NORMAL, loaded) < 0)
-        goto cleanup;
-    if (preview_image)
-        XuiImgFree(preview_image);
-    preview_image = loaded;
-    loaded = NULL;
-    result = 0;
-
-cleanup:
-    if (loaded)
-        XuiImgFree(loaded);
-    if (generated)
-        XuiImgFree(generated);
-    if (captured)
-        XuiImgFree(captured);
-    free(source);
-    free(output);
-    return result;
+static void start_live(void)
+{
+    if (!camera) camera = XuiCreateCamera(screen, 0, VIEW_Y + (VIEW_HEIGHT - 360) / 2, 0, CAMERA_640_480, PREVIEW_75);
+    state = camera ? CAMERA_LIVE : CAMERA_IDLE;
+    bitmap_ready = 0;
+    XuiShowWindow(photo_canvas, 0, 0);
+    XuiShowWindow(live_canvas, 0, 0);
+    live_corrected = camera != NULL;
+    if (camera) XuiShowWindow(camera, 0, 0);
+    last_live_ms = millis();
+    draw_controls();
+    status(camera ? "LIVE" : "CAMERA FAILED");
 }
 
 static void snap(void)
 {
-    if (!camera) {
-        status("CAMERA NOT READY");
-        return;
-    }
-    bitmap_ready = 0;
-    status("MAKING PIXEL PHOTO");
-    if (prepare_snapshot() < 0) {
+    if (state != CAMERA_LIVE) return;
+    status("CAPTURING");
+    if (capture_gray() < 0) {
         status("SNAP FAILED");
-        puts("Pixel photo failed");
-        fflush(stdout);
         return;
     }
-    bitmap_ready = 1;
+    if (render_photo() < 0) {
+        status("PREVIEW FAILED");
+        return;
+    }
+    state = PHOTO_REVIEW;
+    XuiShowWindow(live_canvas, 0, 0);
     XuiShowWindow(camera, 0, 0);
-    XuiShowWindow(pixel_canvas, 1, 0);
-    status(print_mode == BOLD_MODE ? "BOLD READY" : "SHADE READY");
-    puts("Pixel photo ready");
-    fflush(stdout);
+    XuiShowWindow(photo_canvas, 1, 0);
+    draw_controls();
+    status("PHOTO READY");
+    action_ms = millis();
+    XuiClearKey();
 }
 
-static void queue_image_chunk(int first_row)
+static XuiImg *capture_live_image(void)
 {
-    int row, index = 0;
-    packet[index++] = CHUNK_HEIGHT;
-    for (row = 0; row < CHUNK_HEIGHT; ++row) {
+    XuiImg *image;
+    if (!face_enabled) {
+        image = XuiCameraCapture(camera);
+        if (!image) return NULL;
+        if (XuiImgResize(image, LIVE_SCREEN_WIDTH, LIVE_SCREEN_HEIGHT) >= 0 &&
+            XuiImgTransform(image, XUI_FLIP_HORIZ) >= 0)
+            return image;
+    } else {
+        int i, channel;
+        if (capture_rgba(LIVE_WIDTH, LIVE_HEIGHT) < 0) return NULL;
+        for (i = 0; i < LIVE_WIDTH * LIVE_HEIGHT; ++i)
+            gray[i] = luminance(rgba + i * 4);
+        pixel_lift_center(gray, LIVE_WIDTH, LIVE_HEIGHT, face_gray);
+        for (i = 0; i < LIVE_WIDTH * LIVE_HEIGHT; ++i) {
+            int lift = face_gray[i] - gray[i];
+            for (channel = 0; channel < 3; ++channel) {
+                int value = rgba[i * 4 + channel] + lift;
+                rgba[i * 4 + channel] = (unsigned char)(value > 255 ? 255 : value);
+            }
+        }
+        image = XuiRgbaToImg((char *)rgba, LIVE_WIDTH * LIVE_HEIGHT * 4, LIVE_WIDTH, LIVE_HEIGHT);
+        if (!image) return NULL;
+        if (XuiImgResize(image, LIVE_SCREEN_WIDTH, LIVE_SCREEN_HEIGHT) >= 0) return image;
+    }
+    XuiImgFree(image);
+    return NULL;
+}
+
+static void update_live(void)
+{
+    unsigned long now = millis();
+    XuiImg *image;
+    if (state != CAMERA_LIVE || !live_corrected || now - last_live_ms < LIVE_INTERVAL_MS)
+        return;
+    last_live_ms = now;
+    image = capture_live_image();
+    if (!image) goto native_preview;
+    if (XuiCanvasDrawImg(live_canvas, 0, (VIEW_HEIGHT - LIVE_SCREEN_HEIGHT) / 2,
+                         LIVE_SCREEN_WIDTH, LIVE_SCREEN_HEIGHT,
+                         XUI_BG_NORMAL, image) < 0) {
+        XuiImgFree(image);
+        goto native_preview;
+    }
+    if (live_image) XuiImgFree(live_image);
+    live_image = image;
+    XuiShowWindow(live_canvas, 1, 0);
+    return;
+
+native_preview:
+    live_corrected = 0;
+    XuiShowWindow(live_canvas, 0, 0);
+    XuiShowWindow(camera, 1, 0);
+    status("NATIVE LIVE");
+}
+
+static void settings_changed(void)
+{
+    draw_controls();
+    if (state == PHOTO_REVIEW)
+        status(render_photo() == 0 ? "PHOTO READY" : "PREVIEW FAILED");
+}
+
+static void queue_image_chunk(int first, int rows)
+{
+    int row, index = 1;
+    packet[0] = (unsigned char)rows;
+    for (row = 0; row < rows; ++row) {
         packet[index++] = 0;
         packet[index++] = ROW_BYTES;
-        memcpy(packet + index, bitmap + (first_row + row) * ROW_BYTES,
-               ROW_BYTES);
+        memcpy(packet + index, bitmap + (first + row) * ROW_BYTES, ROW_BYTES);
         index += ROW_BYTES;
     }
     OsPrnPutImage(packet);
@@ -327,146 +358,165 @@ static void queue_image_chunk(int first_row)
 
 static void print_photo(void)
 {
-    int opened, check, result;
-    char message[64];
+    int result, start = 0;
+    char message[48];
     if (!bitmap_ready) {
-        status("SNAP A PHOTO FIRST");
+        status("PHOTO NOT READY");
         return;
     }
-    opened = OsPrnOpen(PRN_REAL, NULL);
-    if (opened != RET_OK) {
-        snprintf(message, sizeof(message), "PRINTER OPEN: %d", opened);
-        status(message);
-        printf("Pixel printer open=%d\n", opened);
-        fflush(stdout);
-        return;
-    }
-    check = OsPrnCheck();
-    if (check != RET_OK) {
+    status("PRINTING");
+    result = OsPrnOpen(PRN_REAL, NULL);
+    if (result == RET_OK) {
+        while (start < print_height && (result = OsPrnCheck()) == RET_OK) {
+            int chunk;
+            OsPrnClrBuf();
+            OsPrnSetGray(print_density);
+            OsPrnSetIndent(0, 0);
+            OsPrnSetSpace(0, 0);
+            for (chunk = 0; chunk < 2 && start < print_height; ++chunk) {
+                int rows = print_height - start;
+                if (rows > CHUNK_HEIGHT) rows = CHUNK_HEIGHT;
+                queue_image_chunk(start, rows);
+                start += rows;
+            }
+            if (start == print_height) OsPrnFeed(48);
+            result = OsPrnStart();
+            if (result != RET_OK) break;
+        }
         OsPrnClose();
-        snprintf(message, sizeof(message), "PRINTER CHECK: %d", check);
-        status(message);
-        printf("Pixel printer check=%d\n", check);
-        fflush(stdout);
-        return;
     }
-    status("PRINTING PHOTO");
-    OsPrnClrBuf();
-    OsPrnSetGray(4);
-    OsPrnSetIndent(0, 0);
-    OsPrnSetSpace(0, 0);
-    queue_image_chunk(0);
-    queue_image_chunk(CHUNK_HEIGHT);
-    OsPrnFeed(48);
-    result = OsPrnStart();
-    OsPrnClose();
-    snprintf(message, sizeof(message), "PRINT RESULT: %d", result);
+    snprintf(message, sizeof(message), result == RET_OK ? "PRINTED" : "PRINT ERR %d", result);
     status(message);
-    printf("Pixel print result=%d\n", result);
-    fflush(stdout);
+    action_ms = millis();
+    XuiClearKey();
+}
+
+static void feed_paper(void)
+{
+    int result = OsPrnOpen(PRN_REAL, NULL);
+    if (result == RET_OK) {
+        result = OsPrnCheck();
+        if (result == RET_OK) {
+            OsPrnClrBuf();
+            OsPrnFeed(MANUAL_FEED_DOTS);
+            result = OsPrnStart();
+        }
+        OsPrnClose();
+    }
+    if (result == RET_OK) {
+        status("PAPER FED");
+    } else {
+        char message[40];
+        snprintf(message, sizeof(message), "FEED ERR %d", result);
+        status(message);
+    }
+    XuiClearKey();
 }
 
 int app_main(int argc, char **argv)
 {
-    int key, result = 1;
-    if (XuiOpen(argc, argv) < 0)
-        return 1;
+    static const enum ButtonId grid[][3] = {
+        {MODE, LAYOUT, FACE},
+        {LIGHTER, CELL, DARKER},
+        {DENSITY, FEED, BUTTON_COUNT},
+        {EXIT, RETURN_LIVE, ACTION},
+    };
+    int key, result = 1, i;
+    unsigned int row, col;
+    int white = rgb(255, 255, 255);
+
+    if (XuiOpen(argc, argv) < 0) return 1;
     screen = XuiRootCanvas();
     font = XuiCreateFont("/usr/font/tm_font", 0, XUI_FONT_GREY);
-    if (!screen || !font)
-        goto cleanup;
-
-    XuiCanvasSetBackground(screen, XUI_BG_NORMAL, 0, rgb(8, 11, 15));
-    XuiCanvasDrawRect(screen, 20, 20, 8, 80, rgb(0, 201, 52), 0, 1);
-    XuiCanvasDrawText(screen, 44, 17, 50, font, XUI_BOLD,
-                      rgb(255, 255, 255), "Q80 PIXEL CAMERA");
-    XuiCanvasDrawText(screen, 44, 81, 24, font, XUI_BOLD,
-                      rgb(194, 207, 212), "SNAP / PREVIEW / PRINT");
-    pixel_canvas = XuiCreateCanvas(screen, 0, 132, 480, 360);
-    if (!pixel_canvas)
-        goto cleanup;
-    XuiCanvasSetBackground(pixel_canvas, XUI_BG_NORMAL, 0, rgb(31, 38, 45));
-    XuiShowWindow(pixel_canvas, 0, 0);
-    if (make_button(&snap_button, 20, 614, 140, "SNAP", SNAP_KEY,
-                    rgb(0, 201, 52), rgb(0, 153, 39),
-                    rgb(255, 255, 255)) < 0 ||
-        make_button(&print_button, 170, 614, 140, "PRINT", PRINT_KEY,
-                    rgb(255, 255, 255), rgb(221, 229, 226),
-                    rgb(16, 16, 16)) < 0 ||
-        make_button(&mode_button, 320, 614, 140, "MODE", MODE_KEY,
-                    rgb(55, 63, 72), rgb(80, 90, 101),
-                    rgb(255, 255, 255)) < 0 ||
-        make_button(&retake_button, 20, 704, 210, "RETAKE", RETAKE_KEY,
-                    rgb(55, 63, 72), rgb(80, 90, 101),
-                    rgb(255, 255, 255)) < 0 ||
-        make_button(&exit_button, 250, 704, 210, "EXIT", EXIT_KEY,
-                    rgb(255, 135, 0), rgb(205, 100, 0),
-                    rgb(255, 255, 255)) < 0)
-        goto cleanup;
-
-    camera = XuiCreateCamera(screen, 0, 132, 0,
-                             CAMERA_640_480, PREVIEW_75);
-    if (camera) {
-        XuiShowWindow(camera, 1, 0);
-        status("BOLD MODE - TAP SNAP");
-        puts("Pixel camera preview started");
-    } else {
-        status("CAMERA OPEN FAILED");
-        puts("Pixel camera preview failed");
+    if (!screen || !font) goto cleanup;
+    XuiCanvasSetBackground(screen, XUI_BG_NORMAL, 0, rgb(10, 15, 22));
+    XuiCanvasDrawRect(screen, 16, 8, 6, 32, rgb(0, 201, 52), 0, 1);
+    text(33, 8, 33, white, "PIXEL CAMERA");
+    photo_canvas = XuiCreateCanvas(screen, 0, VIEW_Y, 480, VIEW_HEIGHT);
+    live_canvas = XuiCreateCanvas(screen, 0, VIEW_Y, 480, VIEW_HEIGHT);
+    if (!photo_canvas || !live_canvas) goto cleanup;
+    XuiShowWindow(photo_canvas, 0, 0);
+    XuiShowWindow(live_canvas, 0, 0);
+    XuiCanvasSetBackground(live_canvas, XUI_BG_NORMAL, 0, rgb(25, 33, 44));
+    for (row = 0; row < sizeof(grid) / sizeof(grid[0]); ++row) {
+        for (col = 0; col < 3; ++col) {
+            enum ButtonId id = grid[row][col];
+            if (id != BUTTON_COUNT &&
+                make_button(id, 16 + col * 154, KEYPAD_Y + row * ROW_STEP,
+                            KEY_WIDTH, KEY_HEIGHT) < 0)
+                goto cleanup;
+        }
     }
-    fflush(stdout);
 
+    start_live();
     XuiClearKey();
     while (XuiIsRunning()) {
         if (!XuiHasKey()) {
-            usleep(10000);
+            update_live();
+            usleep(12000);
             continue;
         }
         key = XuiGetKey();
-        if (key == XUI_KEYCANCEL || key == EXIT_KEY) {
-            result = 0;
-            break;
+        if (key == XUI_KEYCANCEL || key == BUTTON_KEY + EXIT) break;
+        switch (key) {
+        case XUI_KEY1: key = BUTTON_KEY + MODE; break;
+        case XUI_KEY1 + 1: key = BUTTON_KEY + LAYOUT; break;
+        case XUI_KEY1 + 2: key = BUTTON_KEY + FACE; break;
+        case XUI_KEY1 + 3: key = BUTTON_KEY + LIGHTER; break;
+        case XUI_KEY1 + 4: key = BUTTON_KEY + CELL; break;
+        case XUI_KEY1 + 5: key = BUTTON_KEY + DARKER; break;
+        case XUI_KEY1 + 6: key = BUTTON_KEY + DENSITY; break;
+        case XUI_KEY1 + 7: key = BUTTON_KEY + FEED; break;
+        default: break;
         }
-        if (key == SNAP_KEY)
-            snap();
-        else if (key == PRINT_KEY)
-            print_photo();
-        else if (key == RETAKE_KEY && camera) {
-            bitmap_ready = 0;
-            XuiShowWindow(pixel_canvas, 0, 0);
-            XuiShowWindow(camera, 1, 0);
-            status("LIVE - TAP SNAP");
-        } else if (key == MODE_KEY && camera) {
-            print_mode = print_mode == BOLD_MODE ? SHADE_MODE : BOLD_MODE;
-            bitmap_ready = 0;
-            XuiShowWindow(pixel_canvas, 0, 0);
-            XuiShowWindow(camera, 1, 0);
-            status(print_mode == BOLD_MODE ? "BOLD MODE - TAP SNAP" :
-                                           "SHADE MODE - TAP SNAP");
+        if (key == XUI_KEYCLEAR || key == BUTTON_KEY + RETURN_LIVE) {
+            start_live();
+        } else if (key == XUI_KEYENTER || key == BUTTON_KEY + ACTION) {
+            if (state == CAMERA_LIVE) snap();
+            else if (state == PHOTO_REVIEW) {
+                if (key == BUTTON_KEY + ACTION || millis() - action_ms >= ACTION_DELAY_MS)
+                    print_photo();
+                else
+                    action_ms = millis();
+            }
+        } else if (key == BUTTON_KEY + MODE) {
+            mode = mode == PIXEL_BOLD ? PIXEL_SHADE : mode + 1;
+            settings_changed();
+        } else if (key == BUTTON_KEY + CELL) {
+            cell_size = cell_size == 4 ? 2 : cell_size + 1;
+            if (mode == PIXEL_BOLD) draw_controls();
+            else settings_changed();
+        } else if (key == BUTTON_KEY + DENSITY) {
+            print_density = print_density == 4 ? 1 : print_density == 1 ? 3 : 4;
+            draw_controls();
+        } else if (key == BUTTON_KEY + FEED) {
+            feed_paper();
+        } else if (key == BUTTON_KEY + LAYOUT) {
+            layout = layout == PHOTO_WIDE ? PHOTO_TALL : PHOTO_WIDE;
+            settings_changed();
+        } else if (key == BUTTON_KEY + FACE) {
+            face_enabled = !face_enabled;
+            settings_changed();
+        } else if (key == BUTTON_KEY + LIGHTER || key == BUTTON_KEY + DARKER) {
+            int next = adjustment + (key == BUTTON_KEY + LIGHTER ? -ADJUST_STEP : ADJUST_STEP);
+            if (next >= -ADJUST_LIMIT && next <= ADJUST_LIMIT) {
+                adjustment = next;
+                settings_changed();
+            }
         }
     }
+    result = 0;
 
 cleanup:
-    if (camera)
-        XuiDestroyWindow(camera);
-    if (exit_button.window)
-        XuiDestroyWindow(exit_button.window);
-    if (retake_button.window)
-        XuiDestroyWindow(retake_button.window);
-    if (mode_button.window)
-        XuiDestroyWindow(mode_button.window);
-    if (print_button.window)
-        XuiDestroyWindow(print_button.window);
-    if (snap_button.window)
-        XuiDestroyWindow(snap_button.window);
-    if (pixel_canvas)
-        XuiDestroyWindow(pixel_canvas);
-    if (preview_image)
-        XuiImgFree(preview_image);
-    if (font)
-        XuiDestroyFont(font);
+    if (camera) XuiDestroyWindow(camera);
+    for (i = 0; i < BUTTON_COUNT; ++i)
+        if (buttons[i].window) XuiDestroyWindow(buttons[i].window);
+    if (photo_canvas) XuiDestroyWindow(photo_canvas);
+    if (live_canvas) XuiDestroyWindow(live_canvas);
+    if (photo_image) XuiImgFree(photo_image);
+    if (live_image) XuiImgFree(live_image);
+    if (font) XuiDestroyFont(font);
     XuiClose();
-    if (result != 0)
-        puts("Pixel Camera could not start");
+    if (result) puts("Pixel Camera could not start");
     return result;
 }
