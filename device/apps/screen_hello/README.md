@@ -1,6 +1,8 @@
 # 螢幕顯示範例
 
-`screen_hello` 是使用裝置原廠 XUI 的 `app_main` DLL。畫面顯示 `HELLO Q80`，按任意實體鍵結束。
+`screen_hello` 是 Q80 的顯示測試 App。它直接連結原廠 XUI 和 OSAL，顯示螢幕解析度，並以內建字型呈現中文、英文及數字。可點選紅、綠、藍、白、黑色塊，或按實體數字鍵 1–5，切換大色塊並查看色碼。
+
+首次建置前，依 [Windows ARM 編譯環境](../../../toolchain/readme.md) 執行 `python toolchain/setup.py`。
 
 先備妥編譯環境並讓裝置的 Telnet 可連線，再於專案根目錄執行：
 
@@ -11,6 +13,6 @@ python -m q80 app run screen_hello
 python -m q80 app stop screen_hello
 ```
 
-按任意實體鍵後 App 會結束；`app stop` 可強制停止。若啟動失敗，可用 `python -m q80 app logs screen_hello` 查看訊息。
+點 `EXIT` 或按實體取消鍵即可退出。`app stop` 可從電腦提前停止。
 
-程式使用 [xui.h](../../../toolchain/include/xui.h) 的函數宣告，先用 `dlopen` 將 XUI 需要的裝置函式庫載入，再以 `dlsym` 取得畫字函式；載入順序與字型路徑來自先前的 Q80 實機 XUI probe。程式只使用裝置上的函式庫，沒有把它們打包進 DLL。
+建置時依 `app.toml` 連結 `libxui.so` 和 `libosal.so`。執行時由 Q80 的動態載入器從裝置取得這兩個函式庫，字型使用原廠的 `/usr/font/tm_font`。

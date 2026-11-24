@@ -4,7 +4,7 @@
 
 ## 建置與部署
 
-先依 [linked_hello](../linked_hello/README.md) 準備 `toolchain/device-libs/libosal.so` 與 `libxui.so`。Telnet 需已啟動。
+首次建置前，依 [Windows ARM 編譯環境](../../../toolchain/readme.md) 執行 `python toolchain/setup.py`。部署時 Telnet 需已啟動。
 
 ```powershell
 python -m q80 mainapp build

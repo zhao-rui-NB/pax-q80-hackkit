@@ -10,7 +10,7 @@
 | `BEEP` | 點 1–7，播放對應蜂鳴器音調 |
 | `POWER` | 顯示 OSAL 電池級別與供電來源；此機電池電量回報不支援 |
 
-先依 [linked_hello](../linked_hello/README.md) 的步驟，將裝置的 `libosal.so`、`libxui.so` 複製到本機 `toolchain/device-libs/`。之後執行：
+首次建置前，依 [Windows ARM 編譯環境](../../../toolchain/readme.md) 執行 `python toolchain/setup.py`。之後執行：
 
 ```powershell
 python -m q80 app build hardware_test

@@ -13,7 +13,7 @@
 ## 執行檔案
 
 - `main.c`、`ime.c`、`ime.h`、`keycaps.h`：XUI 畫面與注音輸入。
-- `runtime/libchewing.so`：移除拼音來源與初始化的 libchewing 0.5.1；不需要 `pinyin.tab`。
+- `runtime/libchewing.so`：移除拼音來源與初始化的 libchewing 0.5.1。進入編輯器時，`ime.c` 用 `dlopen` 載入它，再用 `dlsym` 取得注音函式。
 - `runtime/data/dictionary.dat`、`index_tree.dat`：中文字與候選字資料。
 - `runtime/data/symbols.dat`、`swkb.dat`：目前函式庫建立輸入環境時仍會載入，不能只刪檔。
 - `runtime/NotoSansTC.ttf`：顯示機器內建字型缺少的中文字；授權見 `LICENSE-NOTO.txt`。

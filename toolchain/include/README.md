@@ -26,4 +26,4 @@
 - OSAL：螢幕亮度和大小、鍵盤背光、蜂鳴器、印表機、磁條／IC／感應讀卡器、相機及 PED。
 - XUI 不支援多程序同時控制顯示與輸入。範例的 `app run` 會暫停 `tm`；結束後要用 `app stop` 恢復它。PED 狀態也可能改變螢幕、按鍵和觸控的控制權。
 
-一般 Prolin SDK 開發會包含原廠標頭並連結對應 `.so`。目前專案沒有相符版本的原廠 SDK 開發庫；`screen_hello` 使用 `dlopen`／`dlsym`。若先從 Q80 複製原廠 `.so` 到 `toolchain/device-libs/`，則 [linked_hello](../../device/apps/linked_hello/README.md) 可在 `app.toml` 指定 `libraries = ["osal", "xui"]`，編譯時連結、執行時直接呼叫函數。`app-exe` 若直接呼叫 OSAL／XUI，還需要另外處理連結，只有 `#include` 不會自動連上函式庫。
+一般 Prolin SDK 開發會包含原廠標頭並連結對應 `.so`。本專案在 `toolchain/device-libs/` 提供編譯使用的原廠函式庫。[screen_hello](../../device/apps/screen_hello/README.md) 在 `app.toml` 指定 `libraries = ["osal", "xui"]`，編譯時連結、執行時直接呼叫函式。`app-exe` 若直接呼叫 OSAL／XUI，還需要另外設定連結。

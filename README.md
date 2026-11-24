@@ -123,7 +123,6 @@ python -m q80 xcb reboot
 
 有 `main()` 的 ARM 執行檔使用 `app-exe build`；`app_main` DLL 使用 `app build`。工具鏈來源與實機啟動方式見 [Windows main() 編譯](docs/windows-main.md)。
 
-需要螢幕顯示範例，可從 [screen_hello](device/apps/screen_hello/README.md) 開始。
-想直接連結裝置 XUI／OSAL 庫，可看 [linked_hello](device/apps/linked_hello/README.md)。
+需要螢幕顯示或直接連結 XUI／OSAL 的範例，可從 [screen_hello](device/apps/screen_hello/README.md) 開始。
 分頁式硬體測試程式見 [hardware_test](device/apps/hardware_test/README.md)。
 要讓原廠啟動流程顯示可開啟其他 App 的選單，見 [MAINAPP 選單](device/apps/mainapp/README.md)。

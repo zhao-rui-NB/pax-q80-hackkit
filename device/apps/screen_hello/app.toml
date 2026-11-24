@@ -1,3 +1,4 @@
 id = "screen_hello"
-name = "Screen Hello"
-version = "0.1.0"
+name = "Display Test"
+version = "0.2.0"
+libraries = ["osal", "xui"]
