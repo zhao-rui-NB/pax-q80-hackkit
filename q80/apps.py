@@ -2,6 +2,7 @@
 
 import logging
 from pathlib import Path
+import stat
 import tempfile
 
 from q80.app_manifest import App
@@ -32,6 +33,23 @@ def deploy(session: Session, app: App) -> None:
         f"chown {APP_UID}:{APP_GID} {quote(app_dir)} {quote(info_dir)} "
         f"{quote(app_dir + '/' + app.binary)} {quote(info_dir + '/appinfo')}"
     )
+    runtime = app.folder / "runtime"
+    if runtime.is_dir():
+        files = sorted(path for path in runtime.rglob("*") if path.is_file())
+        directories = sorted({path.parent.relative_to(runtime) for path in files},
+                             key=lambda path: (len(path.parts), str(path)))
+        for relative in directories:
+            if relative.parts:
+                shell.run(f"mkdir -p {quote(app_dir + '/' + relative.as_posix())}")
+        session.xcb.connect()
+        for path in files:
+            remote = app_dir + "/" + path.relative_to(runtime).as_posix()
+            session.xcb.push(path, remote, stat.S_IFREG | 0o644)
+            shell.run(f"chown {APP_UID}:{APP_GID} {quote(remote)}")
+        for relative in directories:
+            if relative.parts:
+                shell.run(f"chown {APP_UID}:{APP_GID} "
+                          f"{quote(app_dir + '/' + relative.as_posix())}")
     success(log, "App deployed: %s", app.app_id)
 
 
