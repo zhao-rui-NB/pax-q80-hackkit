@@ -10,17 +10,21 @@
 
 #define LINE_BYTES 512
 #define LABEL_WIDTH 384
-#define LABEL_HEIGHT 240
+#define MIN_PAPER_LENGTH 240
+#define MAX_PAPER_LENGTH 8192
+#define LABEL_MARGIN 16
+#define MAX_LABEL_SIZE (LABEL_WIDTH - 2 * LABEL_MARGIN)
+#define XUI_RASTER_SIZE 120
+#define PRINT_BAND 240
 #define LABEL_ROW_BYTES (LABEL_WIDTH / 8)
 #define MIN_LABEL_SIZE 14
 #define LABEL_LINE_GAP 10
-#define LABEL_ROWS ((LABEL_HEIGHT + LABEL_LINE_GAP) / (MIN_LABEL_SIZE + LABEL_LINE_GAP))
 #define WORKSPACE_X 20
 #define WORKSPACE_WIDTH 440
 #define WORKSPACE_Y 112
 #define WORKSPACE_HEIGHT 548
 #define PREVIEW_X (WORKSPACE_X + (WORKSPACE_WIDTH - LABEL_WIDTH) / 2)
-#define PREVIEW_Y (WORKSPACE_Y + (WORKSPACE_HEIGHT - LABEL_HEIGHT) / 2)
+#define PREVIEW_Y WORKSPACE_Y
 #define EDIT_TEXT_Y 65
 #define EDIT_HEIGHT 140
 #define EDIT_FONT_SIZE 40
@@ -30,6 +34,7 @@
 #define KEY_PRINT 514
 #define KEY_SMALLER 515
 #define KEY_LARGER 516
+#define KEY_ORIENTATION 517
 #define KEY_NEXT 520
 #define KEY_MODE 521
 #define KEY_SPACE 522
@@ -64,7 +69,7 @@ typedef struct {
     XuiWindow *window;
     XuiButtonStat normal, pressed;
 } Button;
-static Button print_button, exit_button;
+static Button print_button, exit_button, orientation_button;
 static Button smaller_button, larger_button, left_button, right_button;
 static Button newline_button;
 static Button up_button, down_button;
@@ -75,20 +80,35 @@ static char candidate_text[5][48], ascii_text[41][4];
 static char mode_text[16];
 static int editing, mode, candidate_page;
 static int received_touch;
-static int preview_fits;
+static unsigned char *label_bitmap;
+static int paper_length, preview_top, sideways;
+static int layout_error;
 static int label_size = 30;
 static size_t cursor;
 static size_t edit_start, edit_end;
 static int composition_width;
 static size_t upper_row_start, lower_row_start;
 
-static int draft_width(size_t start, size_t end, int size)
+static int text_width(const char *source, size_t start, size_t end, int size)
 {
     char text[LINE_BYTES];
     if (start == end) return 0;
-    memcpy(text, draft + start, end - start);
+    memcpy(text, source + start, end - start);
     text[end - start] = 0;
     return XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, text);
+}
+
+static int raster_font_size(int size)
+{
+    return size > XUI_RASTER_SIZE ? XUI_RASTER_SIZE : size;
+}
+
+static int label_text_width(const char *source, size_t start, size_t end)
+{
+    int base_size = raster_font_size(label_size);
+    int width = text_width(source, start, end, base_size);
+    if (width < 0) return MAX_LABEL_SIZE + 1;
+    return (width * label_size + base_size - 1) / base_size;
 }
 
 static int clamp(int value, int low, int high)
@@ -180,6 +200,9 @@ static void destroy_main(void)
     destroy(&exit_button);
     destroy(&print_button);
     destroy(&smaller_button);
+    destroy(&orientation_button);
+    free(label_bitmap);
+    label_bitmap = NULL;
     destroy(&larger_button);
     if (preview) XuiDestroyWindow(preview);
     preview = 0;
@@ -187,56 +210,178 @@ static void destroy_main(void)
     main_canvas = 0;
 }
 
-static int draw_label(void)
+typedef struct {
+    size_t start, end;
+    int width, along, across;
+} LabelRun;
+
+static int layout_label(LabelRun *runs, int *count)
 {
-    char rows[LABEL_ROWS][LINE_BYTES] = {{0}};
-    const char *start = line;
-    const char *end = line;
-    int row = 0, i, y, widths[LABEL_ROWS];
+    size_t start = 0;
+    int row = 0, along = 0, longest = 0;
     int spacing = label_size + LABEL_LINE_GAP;
 
-    XuiCanvasDrawRect(preview, 0, 0, LABEL_WIDTH, LABEL_HEIGHT,
-                      rgb(255,255,255), 0, 1);
-    while (*end) {
-        const char *next = line + next_char(line, (size_t)(end - line));
-        if (*end == '\n') {
-            if (++row == LABEL_ROWS) return 0;
-            start = end = next;
-            continue;
-        }
-        memcpy(rows[row], start, (size_t)(next - start));
-        rows[row][next - start] = 0;
-        if (XuiTextWidthEx(chinese_font, label_size, XUI_TEXT_NORMAL, rows[row]) > LABEL_WIDTH - 32) {
-            rows[row][end - start] = 0;
-            if (++row == LABEL_ROWS || end == start) return 0;
-            start = end;
-        } else {
+    *count = 0;
+    while (line[start]) {
+        size_t end = start;
+        int width = 0;
+        while (line[end] && line[end] != '\n') {
+            size_t next = next_char(line, end);
+            int measured = label_text_width(line, start, next);
+            if (measured > MAX_LABEL_SIZE) break;
             end = next;
+            width = measured;
+        }
+        if (end == start && line[end] != '\n') return -1;
+        if (end != start) {
+            runs[(*count)++] = (LabelRun){start, end, width, along, row * spacing};
+            along += width;
+            if (along > longest) longest = along;
+        }
+        if (line[end] == '\n') {
+            ++end;
+            ++row;
+            along = 0;
+        } else if (!sideways && line[end]) {
+            ++row;
+            along = 0;
+        }
+        start = end;
+    }
+
+    int cross_length = row * spacing + label_size + 2 * LABEL_MARGIN;
+    int feed_length = sideways ? longest + 2 * LABEL_MARGIN : cross_length;
+    if (sideways && cross_length > LABEL_WIDTH) return -1;
+    if (feed_length > MAX_PAPER_LENGTH) return -2;
+    return feed_length < MIN_PAPER_LENGTH ? MIN_PAPER_LENGTH : feed_length;
+}
+
+static int rasterize_run(const LabelRun *run, XuiWindow *work, unsigned char *rgba,
+                         int base_size)
+{
+    char text[LINE_BYTES];
+    int x, y, result, width;
+    int height = base_size + LABEL_MARGIN;
+    XuiImg *image;
+
+    if (!run->width) return 0;
+    width = text_width(line, run->start, run->end, base_size);
+    if (width <= 0 || width > LABEL_WIDTH) return -1;
+    memcpy(text, line + run->start, run->end - run->start);
+    text[run->end - run->start] = 0;
+    XuiCanvasDrawRect(work, 0, 0, LABEL_WIDTH, height, rgb(255,255,255), 0, 1);
+    if (XuiCanvasDrawText(work, 0, 0, base_size, chinese_font,
+                          XUI_TEXT_NORMAL, rgb(0,0,0), text) < 0)
+        return -1;
+    image = XuiCaptureCanvas(work, 0, 0, width, height);
+    if (!image) return -1;
+    result = XuiImgToRgba(image, (char *)rgba);
+    XuiImgFree(image);
+    if (result < 0) return -1;
+
+    for (y = 0; y < label_size + LABEL_MARGIN; ++y) {
+        int source_y = y * base_size / label_size;
+        for (x = 0; x < run->width; ++x) {
+            int source_x = x * base_size / label_size;
+            const unsigned char *pixel = rgba + (source_y * width + source_x) * 4;
+            if (pixel[0] + pixel[1] + pixel[2] >= 384) continue;
+            int paper_x = sideways ? LABEL_WIDTH - 1 - LABEL_MARGIN - run->across - y
+                                   : (LABEL_WIDTH - run->width) / 2 + x;
+            int paper_y = sideways ? LABEL_MARGIN + run->along + x
+                                   : LABEL_MARGIN + run->across + y;
+            if (paper_x >= 0 && paper_x < LABEL_WIDTH && paper_y < paper_length)
+                label_bitmap[paper_y * LABEL_ROW_BYTES + paper_x / 8] |= 0x80 >> (paper_x % 8);
         }
     }
-    if (!line[0]) return 1;
-    if (row * spacing + label_size > LABEL_HEIGHT) return 0;
-    for (i = 0; i <= row; ++i) {
-        widths[i] = rows[i][0] ?
-            XuiTextWidthEx(chinese_font, label_size, XUI_TEXT_NORMAL, rows[i]) : 0;
+    return 0;
+}
+
+static void build_preview(void)
+{
+    LabelRun runs[LINE_BYTES];
+    int count, i;
+    XuiWindow *work;
+    unsigned char *rgba;
+    int base_size = raster_font_size(label_size);
+    int height = base_size + LABEL_MARGIN;
+
+    free(label_bitmap);
+    label_bitmap = NULL;
+    preview_top = 0;
+    layout_error = 0;
+    paper_length = layout_label(runs, &count);
+    if (paper_length < 0) {
+        layout_error = paper_length;
+        return;
     }
-    y = (LABEL_HEIGHT - row * spacing - label_size) / 2;
-    for (i = 0; i <= row; ++i) {
-        if (!rows[i][0]) continue;
-        XuiCanvasDrawText(preview, (LABEL_WIDTH - widths[i]) / 2,
-                          y + i * spacing, label_size,
-                          chinese_font, XUI_TEXT_NORMAL, rgb(0,0,0), rows[i]);
+    if (!count) return;
+
+    label_bitmap = calloc((size_t)paper_length, LABEL_ROW_BYTES);
+    rgba = malloc(LABEL_WIDTH * height * 4);
+    work = XuiCreateCanvas(screen, 0, 0, LABEL_WIDTH, height);
+    if (!label_bitmap || !rgba || !work) {
+        layout_error = -3;
+    } else {
+        XuiCanvasSetBackground(work, XUI_BG_NORMAL, 0, rgb(255,255,255));
+        for (i = 0; i < count; ++i) {
+            if (rasterize_run(&runs[i], work, rgba, base_size) < 0) {
+                layout_error = -3;
+                break;
+            }
+        }
     }
-    return 1;
+    if (work) XuiDestroyWindow(work);
+    free(rgba);
+}
+
+static void draw_preview(void)
+{
+    char status[64];
+    int y, x, rows;
+    XuiCanvasDrawRect(preview, 0, 0, LABEL_WIDTH, WORKSPACE_HEIGHT, rgb(255,255,255), 0, 1);
+    if (layout_error) {
+        message(layout_error == -1 ? "TEXT IS TOO WIDE FOR THE PAPER" :
+                layout_error == -2 ? "LABEL IS TOO LONG" : "PREVIEW FAILED");
+        return;
+    }
+    if (!line[0]) {
+        message("ENTER TEXT TO START");
+        return;
+    }
+    rows = clamp(paper_length - preview_top, 0, WORKSPACE_HEIGHT);
+    if (label_bitmap && rows) {
+        size_t bytes = (size_t)LABEL_WIDTH * rows * 4;
+        unsigned char *rgba = malloc(bytes);
+        XuiImg *image;
+        if (!rgba) { message("PREVIEW FAILED"); return; }
+        for (y = 0; y < rows; ++y) {
+            const unsigned char *bits = label_bitmap + (preview_top + y) * LABEL_ROW_BYTES;
+            for (x = 0; x < LABEL_WIDTH; ++x) {
+                unsigned char *pixel = rgba + (y * LABEL_WIDTH + x) * 4;
+                pixel[0] = pixel[1] = pixel[2] = (bits[x / 8] & (0x80 >> (x % 8))) ? 0 : 255;
+                pixel[3] = 255;
+            }
+        }
+        image = XuiRgbaToImg((char *)rgba, bytes, LABEL_WIDTH, rows);
+        if (image) {
+            XuiCanvasDrawImg(preview, 0, 0, LABEL_WIDTH, rows, XUI_BG_NORMAL, image);
+            XuiImgFree(image);
+        }
+        free(rgba);
+        if (!image) { message("PREVIEW FAILED"); return; }
+    }
+    if (paper_length > WORKSPACE_HEIGHT)
+        snprintf(status, sizeof(status), "SIZE %d   %d-%d / %d", label_size,
+                 preview_top + 1, preview_top + rows, paper_length);
+    else
+        snprintf(status, sizeof(status), "SIZE %d", label_size);
+    message(status);
 }
 
 static void refresh_preview(void)
 {
-    char status[48];
-    preview_fits = draw_label();
-    snprintf(status, sizeof(status), "TEXT SIZE %d", label_size);
-    message(!line[0] ? "ENTER TEXT TO START" :
-            preview_fits ? status : "REDUCE SIZE OR SHORTEN TEXT");
+    build_preview();
+    draw_preview();
 }
 
 static int is_tap(const XuiGesture *gesture)
@@ -246,50 +391,43 @@ static int is_tap(const XuiGesture *gesture)
            abs(gesture->cur_y - gesture->down_y) <= 8;
 }
 
-static void print_label(void)
+static int print_band(int start, int rows)
 {
-    static unsigned char packet[1 + LABEL_HEIGHT * (2 + LABEL_ROW_BYTES)];
-    unsigned char *rgba;
-    XuiImg *image;
-    int row, col, result, black = 0, index = 1;
-
-    if (!line[strspn(line, " \n")]) { message("ENTER TEXT FIRST"); return; }
-    if (!preview_fits) { message("TEXT IS TOO LONG"); return; }
-    image = XuiCaptureCanvas(preview, 0, 0, LABEL_WIDTH, LABEL_HEIGHT);
-    if (!image) { message("PREVIEW CAPTURE FAILED"); return; }
-    rgba = malloc(LABEL_WIDTH * LABEL_HEIGHT * 4);
-    result = rgba ? XuiImgToRgba(image, (char *)rgba) : -1;
-    XuiImgFree(image);
-    if (result < 0) { free(rgba); message("PREVIEW CAPTURE FAILED"); return; }
-
-    packet[0] = LABEL_HEIGHT;
-    for (row = 0; row < LABEL_HEIGHT; ++row) {
+    unsigned char packet[1 + PRINT_BAND * (2 + LABEL_ROW_BYTES)];
+    int row, index = 1;
+    packet[0] = (unsigned char)rows;
+    for (row = 0; row < rows; ++row) {
         packet[index++] = 0;
         packet[index++] = LABEL_ROW_BYTES;
-        for (col = 0; col < LABEL_WIDTH; ++col) {
-            const unsigned char *pixel = rgba + (row * LABEL_WIDTH + col) * 4;
-            if (col % 8 == 0) packet[index] = 0;
-            if (pixel[0] + pixel[1] + pixel[2] < 384) {
-                packet[index] |= 0x80 >> (col % 8);
-                ++black;
-            }
-            if (col % 8 == 7) ++index;
-        }
+        memcpy(packet + index, label_bitmap + (start + row) * LABEL_ROW_BYTES,
+               LABEL_ROW_BYTES);
+        index += LABEL_ROW_BYTES;
     }
-    free(rgba);
-    if (!black) { message("LABEL IS BLANK"); return; }
+    OsPrnClrBuf();
+    OsPrnSetGray(4);
+    OsPrnSetIndent(0, 0);
+    OsPrnSetSpace(0, 0);
+    OsPrnPutImage(packet);
+    if (start + rows == paper_length) OsPrnFeed(48);
+    return OsPrnStart();
+}
+
+static void print_label(void)
+{
+    int result, start;
+    size_t byte = 0, bytes = (size_t)paper_length * LABEL_ROW_BYTES;
+
+    if (!line[strspn(line, " \n")]) { message("ENTER TEXT FIRST"); return; }
+    if (layout_error || !label_bitmap) { message("LABEL IS NOT READY"); return; }
+    while (byte < bytes && !label_bitmap[byte]) ++byte;
+    if (byte == bytes) { message("LABEL IS BLANK"); return; }
 
     result = OsPrnOpen(PRN_REAL, NULL);
     if (result == 0) {
-        result = OsPrnCheck();
-        if (result == 0) {
-            OsPrnClrBuf();
-            OsPrnSetGray(4);
-            OsPrnSetIndent(0, 0);
-            OsPrnSetSpace(0, 0);
-            OsPrnPutImage(packet);
-            OsPrnFeed(48);
-            result = OsPrnStart();
+        for (start = 0; start < paper_length && result == 0; start += PRINT_BAND) {
+            result = OsPrnCheck();
+            if (result == 0)
+                result = print_band(start, clamp(paper_length - start, 1, PRINT_BAND));
         }
         OsPrnClose();
     }
@@ -310,19 +448,21 @@ static int draw_main(void)
         if (!main_canvas) return -1;
         XuiShowWindow(main_canvas, 0, 0);
         ui_canvas = main_canvas;
-        heading("Q80 LABEL MAKER", "TAP THE LABEL TO EDIT");
+        heading("Q80 LABEL MAKER", "TAP TO EDIT / SWIPE TO SCROLL");
         XuiCanvasDrawRect(main_canvas, WORKSPACE_X, WORKSPACE_Y,
                           WORKSPACE_WIDTH, WORKSPACE_HEIGHT, rgb(255,255,255), 0, 1);
-        preview = XuiCreateCanvas(main_canvas, PREVIEW_X, PREVIEW_Y, LABEL_WIDTH, LABEL_HEIGHT);
+        preview = XuiCreateCanvas(main_canvas, PREVIEW_X, PREVIEW_Y, LABEL_WIDTH, WORKSPACE_HEIGHT);
         if (!preview) return -1;
         XuiShowWindow(preview, 1, 0);
-        if (button(&smaller_button, 20, 715, 96, 65, "A-", KEY_SMALLER,
+        if (button(&smaller_button, 20, 715, 64, 65, "A-", KEY_SMALLER,
                    rgb(255,255,255), rgb(16,16,16), 27) < 0 ||
-            button(&larger_button, 126, 715, 96, 65, "A+", KEY_LARGER,
+            button(&larger_button, 92, 715, 64, 65, "A+", KEY_LARGER,
                    rgb(255,255,255), rgb(16,16,16), 27) < 0 ||
-            button(&print_button, 232, 715, 124, 65, "PRINT", KEY_PRINT,
+            button(&orientation_button, 164, 715, 104, 65, "0 DEG", KEY_ORIENTATION,
+                   rgb(255,255,255), rgb(16,16,16), 22) < 0 ||
+            button(&print_button, 276, 715, 96, 65, "PRINT", KEY_PRINT,
                    rgb(0,201,52), rgb(16,16,16), 25) < 0 ||
-            button(&exit_button, 366, 715, 94, 65, "EXIT", KEY_EXIT,
+            button(&exit_button, 380, 715, 80, 65, "EXIT", KEY_EXIT,
                    rgb(255,135,0), rgb(255,255,255), 25) < 0) return -1;
     }
     ui_canvas = main_canvas;
@@ -417,8 +557,8 @@ static void refresh_editor(void)
         if (draft[end] == '\n') {
             ends[row++] = end;
             starts[row] = next;
-        } else if (end > starts[row] &&
-                   draft_width(starts[row], next, label_size) > LABEL_WIDTH - 32) {
+        } else if (!sideways && end > starts[row] &&
+                   label_text_width(draft, starts[row], next) > MAX_LABEL_SIZE) {
             ends[row++] = end;
             starts[row] = end;
         }
@@ -512,7 +652,7 @@ static void tap_editor(int x, int y)
     end = edit_end;
     position = x - 30;
     {
-        int before = draft_width(start, cursor, EDIT_FONT_SIZE);
+        int before = text_width(draft, start, cursor, EDIT_FONT_SIZE);
         if (position > before) {
             position -= composition_width + 2;
             if (position < before) position = before;
@@ -520,7 +660,7 @@ static void tap_editor(int x, int y)
     }
     for (target = start; target < end;) {
         size_t next = next_char(draft, target);
-        int width = draft_width(start, next, EDIT_FONT_SIZE);
+        int width = text_width(draft, start, next, EDIT_FONT_SIZE);
         if (position <= (previous_width + width) / 2) break;
         target = next;
         previous_width = width;
@@ -686,10 +826,20 @@ int app_main(int argc, char **argv)
             tap_editor(gesture.cur_x, gesture.cur_y);
             continue;
         }
-        if (has_gesture && !editing && is_tap(&gesture)) {
+        if (has_gesture && !editing && gesture.type == GESTURE_UP) {
             if (gesture.down_x < WORKSPACE_X || gesture.down_x >= WORKSPACE_X + WORKSPACE_WIDTH ||
                 gesture.down_y < WORKSPACE_Y || gesture.down_y >= WORKSPACE_Y + WORKSPACE_HEIGHT)
                 continue;
+            if (!is_tap(&gesture)) {
+                int dy = gesture.cur_y - gesture.down_y;
+                if (!layout_error && abs(dy) > abs(gesture.cur_x - gesture.down_x)) {
+                    int scroll_limit = paper_length > WORKSPACE_HEIGHT ?
+                                       paper_length - WORKSPACE_HEIGHT : 0;
+                    preview_top = clamp(preview_top - dy, 0, scroll_limit);
+                    draw_preview();
+                }
+                continue;
+            }
             XuiShowWindow(main_canvas, 0, 0);
             if (draw_editor() < 0) {
                 destroy_editor(); ime_close(); editing = 0;
@@ -702,8 +852,16 @@ int app_main(int argc, char **argv)
         if (editing) { editor_key(key); continue; }
         if (key == KEY_EXIT || key == XUI_KEYCANCEL) { result = 0; break; }
         if (key == KEY_PRINT) { print_label(); continue; }
+        if (key == KEY_ORIENTATION) {
+            sideways = !sideways;
+            orientation_button.normal.text = sideways ? "90 DEG" : "0 DEG";
+            orientation_button.pressed.text = orientation_button.normal.text;
+            update(&orientation_button);
+            refresh_preview();
+            continue;
+        }
         if (key == KEY_SMALLER || key == KEY_LARGER) {
-            label_size = clamp(label_size + (key == KEY_SMALLER ? -4 : 4), MIN_LABEL_SIZE, 54);
+            label_size = clamp(label_size + (key == KEY_SMALLER ? -8 : 8), MIN_LABEL_SIZE, MAX_LABEL_SIZE);
             refresh_preview();
             continue;
         }
