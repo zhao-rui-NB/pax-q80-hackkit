@@ -21,6 +21,7 @@ static int (*close_candidates)(ChewingContext *);
 static const char *(*buffer)(const ChewingContext *);
 static const char *(*bopomofo)(const ChewingContext *);
 static const char *(*commit)(const ChewingContext *);
+static int (*commit_ready)(const ChewingContext *);
 #define LOAD(target, name) do { \
     *(void **)(&target) = dlsym(library, name); \
     if (!target) goto fail; \
@@ -54,6 +55,7 @@ int ime_open(void)
     LOAD(buffer, "chewing_buffer_String_static");
     LOAD(bopomofo, "chewing_bopomofo_String_static");
     LOAD(commit, "chewing_commit_String_static");
+    LOAD(commit_ready, "chewing_commit_Check");
     context = create("/data/app/label_maker/data",
                      "/data/app/label_maker/userphrase.dat", 0, 0);
     if (context) return 0;
@@ -129,6 +131,6 @@ const char *ime_bopomofo(void)
 }
 const char *ime_commit(void)
 {
-    const char *text = context ? commit(context) : 0;
+    const char *text = context && commit_ready(context) == 1 ? commit(context) : 0;
     return text ? text : "";
 }

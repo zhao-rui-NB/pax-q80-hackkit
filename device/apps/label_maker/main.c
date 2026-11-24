@@ -8,21 +8,40 @@
 #include "ime.h"
 #include "keycaps.h"
 
-#define LINE_BYTES 128
+#define LINE_BYTES 512
 #define LABEL_WIDTH 384
-#define LABEL_HEIGHT 144
+#define LABEL_HEIGHT 240
 #define LABEL_ROW_BYTES (LABEL_WIDTH / 8)
+#define MIN_LABEL_SIZE 14
+#define LABEL_LINE_GAP 10
+#define LABEL_ROWS ((LABEL_HEIGHT + LABEL_LINE_GAP) / (MIN_LABEL_SIZE + LABEL_LINE_GAP))
+#define WORKSPACE_X 20
+#define WORKSPACE_WIDTH 440
+#define WORKSPACE_Y 112
+#define WORKSPACE_HEIGHT 548
+#define PREVIEW_X (WORKSPACE_X + (WORKSPACE_WIDTH - LABEL_WIDTH) / 2)
+#define PREVIEW_Y (WORKSPACE_Y + (WORKSPACE_HEIGHT - LABEL_HEIGHT) / 2)
+#define EDIT_TEXT_Y 65
+#define EDIT_HEIGHT 140
+#define EDIT_FONT_SIZE 40
 #define KEY_FIRST 300
 #define CAND_FIRST 400
-#define KEY_FIELD 500
 #define KEY_EXIT 513
 #define KEY_PRINT 514
+#define KEY_SMALLER 515
+#define KEY_LARGER 516
 #define KEY_NEXT 520
 #define KEY_MODE 521
 #define KEY_SPACE 522
 #define KEY_BACK 523
 #define KEY_DONE 524
 #define KEY_CANCEL 525
+#define KEY_LEFT 526
+#define KEY_RIGHT 527
+#define KEY_NEWLINE 528
+#define KEY_UP 529
+#define KEY_DOWN 530
+#define GESTURE_UP 13
 
 /* DaChen layout, in exactly the same order as keycaps.h. */
 static const char *zhuyin_glyphs[] = {
@@ -45,7 +64,10 @@ typedef struct {
     XuiWindow *window;
     XuiButtonStat normal, pressed;
 } Button;
-static Button field, print_button, exit_button;
+static Button print_button, exit_button;
+static Button smaller_button, larger_button, left_button, right_button;
+static Button newline_button;
+static Button up_button, down_button;
 static Button keys[41], candidates[5], next_button;
 static Button mode_button, space_button, back_button, done_button, cancel_button;
 static char line[LINE_BYTES], draft[LINE_BYTES];
@@ -54,6 +76,38 @@ static char mode_text[16];
 static int editing, mode, candidate_page;
 static int received_touch;
 static int preview_fits;
+static int label_size = 30;
+static size_t cursor;
+static size_t edit_start, edit_end;
+static int composition_width;
+static size_t upper_row_start, lower_row_start;
+
+static int draft_width(size_t start, size_t end, int size)
+{
+    char text[LINE_BYTES];
+    if (start == end) return 0;
+    memcpy(text, draft + start, end - start);
+    text[end - start] = 0;
+    return XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, text);
+}
+
+static int clamp(int value, int low, int high)
+{
+    return value < low ? low : value > high ? high : value;
+}
+
+static size_t next_char(const char *text, size_t at)
+{
+    if (!text[at]) return at;
+    do { ++at; } while (((unsigned char)text[at] & 0xc0) == 0x80);
+    return at;
+}
+
+static size_t previous_char(const char *text, size_t at)
+{
+    while (at && ((unsigned char)text[--at] & 0xc0) == 0x80) {}
+    return at;
+}
 
 static int rgb(int r, int g, int b) { return (int)XuiColor(b, g, r, 255); }
 static void destroy(Button *button)
@@ -116,8 +170,8 @@ static void heading(const char *title, const char *subtitle)
 }
 static void message(const char *text)
 {
-    XuiCanvasDrawRect(ui_canvas, 20, 615, 440, 55, rgb(47, 55, 64), 1, 1);
-    XuiCanvasDrawText(ui_canvas, 32, 624, 28, font, XUI_BOLD,
+    XuiCanvasDrawRect(ui_canvas, 20, 667, 440, 34, rgb(47, 55, 64), 1, 1);
+    XuiCanvasDrawText(ui_canvas, 32, 672, 22, font, XUI_BOLD,
                       rgb(255, 255, 255), (char *)text);
 }
 static void destroy_main(void)
@@ -125,7 +179,8 @@ static void destroy_main(void)
     if (main_canvas) XuiShowWindow(main_canvas, 0, 0);
     destroy(&exit_button);
     destroy(&print_button);
-    destroy(&field);
+    destroy(&smaller_button);
+    destroy(&larger_button);
     if (preview) XuiDestroyWindow(preview);
     preview = 0;
     if (main_canvas) XuiDestroyWindow(main_canvas);
@@ -134,33 +189,61 @@ static void destroy_main(void)
 
 static int draw_label(void)
 {
-    char rows[3][LINE_BYTES] = {{0}};
+    char rows[LABEL_ROWS][LINE_BYTES] = {{0}};
     const char *start = line;
     const char *end = line;
-    int row = 0, i, y;
+    int row = 0, i, y, widths[LABEL_ROWS];
+    int spacing = label_size + LABEL_LINE_GAP;
 
     XuiCanvasDrawRect(preview, 0, 0, LABEL_WIDTH, LABEL_HEIGHT,
                       rgb(255,255,255), 0, 1);
     while (*end) {
-        const char *next = end + 1;
-        while (((unsigned char)*next & 0xc0) == 0x80) ++next;
+        const char *next = line + next_char(line, (size_t)(end - line));
+        if (*end == '\n') {
+            if (++row == LABEL_ROWS) return 0;
+            start = end = next;
+            continue;
+        }
         memcpy(rows[row], start, (size_t)(next - start));
         rows[row][next - start] = 0;
-        if (XuiTextWidthEx(chinese_font, 30, XUI_TEXT_NORMAL, rows[row]) > LABEL_WIDTH - 32) {
+        if (XuiTextWidthEx(chinese_font, label_size, XUI_TEXT_NORMAL, rows[row]) > LABEL_WIDTH - 32) {
             rows[row][end - start] = 0;
-            if (++row == 3 || end == start) return 0;
+            if (++row == LABEL_ROWS || end == start) return 0;
             start = end;
         } else {
             end = next;
         }
     }
-    y = (LABEL_HEIGHT - (row + 1) * 40) / 2;
+    if (!line[0]) return 1;
+    if (row * spacing + label_size > LABEL_HEIGHT) return 0;
     for (i = 0; i <= row; ++i) {
-        int width = XuiTextWidthEx(chinese_font, 30, XUI_TEXT_NORMAL, rows[i]);
-        XuiCanvasDrawText(preview, (LABEL_WIDTH - width) / 2, y + i * 40,
-                          30, chinese_font, XUI_TEXT_NORMAL, rgb(0,0,0), rows[i]);
+        widths[i] = rows[i][0] ?
+            XuiTextWidthEx(chinese_font, label_size, XUI_TEXT_NORMAL, rows[i]) : 0;
+    }
+    y = (LABEL_HEIGHT - row * spacing - label_size) / 2;
+    for (i = 0; i <= row; ++i) {
+        if (!rows[i][0]) continue;
+        XuiCanvasDrawText(preview, (LABEL_WIDTH - widths[i]) / 2,
+                          y + i * spacing, label_size,
+                          chinese_font, XUI_TEXT_NORMAL, rgb(0,0,0), rows[i]);
     }
     return 1;
+}
+
+static void refresh_preview(void)
+{
+    char status[48];
+    preview_fits = draw_label();
+    snprintf(status, sizeof(status), "TEXT SIZE %d", label_size);
+    message(!line[0] ? "ENTER TEXT TO START" :
+            preview_fits ? status : "REDUCE SIZE OR SHORTEN TEXT");
+}
+
+static int is_tap(const XuiGesture *gesture)
+{
+    return gesture->type == GESTURE_UP &&
+           abs(gesture->cur_x - gesture->down_x) <= 8 &&
+           abs(gesture->cur_y - gesture->down_y) <= 8;
 }
 
 static void print_label(void)
@@ -170,7 +253,7 @@ static void print_label(void)
     XuiImg *image;
     int row, col, result, black = 0, index = 1;
 
-    if (!line[strspn(line, " ")]) { message("ENTER TEXT FIRST"); return; }
+    if (!line[strspn(line, " \n")]) { message("ENTER TEXT FIRST"); return; }
     if (!preview_fits) { message("TEXT IS TOO LONG"); return; }
     image = XuiCaptureCanvas(preview, 0, 0, LABEL_WIDTH, LABEL_HEIGHT);
     if (!image) { message("PREVIEW CAPTURE FAILED"); return; }
@@ -227,21 +310,25 @@ static int draw_main(void)
         if (!main_canvas) return -1;
         XuiShowWindow(main_canvas, 0, 0);
         ui_canvas = main_canvas;
-        heading("Q80 LABEL MAKER", "LABEL PREVIEW");
-        preview = XuiCreateCanvas(main_canvas, 48, 132, LABEL_WIDTH, LABEL_HEIGHT);
+        heading("Q80 LABEL MAKER", "TAP THE LABEL TO EDIT");
+        XuiCanvasDrawRect(main_canvas, WORKSPACE_X, WORKSPACE_Y,
+                          WORKSPACE_WIDTH, WORKSPACE_HEIGHT, rgb(255,255,255), 0, 1);
+        preview = XuiCreateCanvas(main_canvas, PREVIEW_X, PREVIEW_Y, LABEL_WIDTH, LABEL_HEIGHT);
         if (!preview) return -1;
         XuiShowWindow(preview, 1, 0);
-        if (button(&field, 20, 318, 440, 86, "EDIT TEXT", KEY_FIELD,
-                   rgb(255,255,255), rgb(16,16,16), 32) < 0 ||
-            button(&print_button, 20, 424, 440, 86, "PRINT LABEL", KEY_PRINT,
-                   rgb(0,201,52), rgb(16,16,16), 32) < 0) return -1;
-        if (button(&exit_button, 20, 694, 440, 86, "EXIT", KEY_EXIT,
-                   rgb(255,135,0), rgb(255,255,255), 35) < 0) return -1;
+        if (button(&smaller_button, 20, 715, 96, 65, "A-", KEY_SMALLER,
+                   rgb(255,255,255), rgb(16,16,16), 27) < 0 ||
+            button(&larger_button, 126, 715, 96, 65, "A+", KEY_LARGER,
+                   rgb(255,255,255), rgb(16,16,16), 27) < 0 ||
+            button(&print_button, 232, 715, 124, 65, "PRINT", KEY_PRINT,
+                   rgb(0,201,52), rgb(16,16,16), 25) < 0 ||
+            button(&exit_button, 366, 715, 94, 65, "EXIT", KEY_EXIT,
+                   rgb(255,135,0), rgb(255,255,255), 25) < 0) return -1;
     }
     ui_canvas = main_canvas;
-    preview_fits = draw_label();
-    message(!line[0] ? "ENTER TEXT TO START" :
-            preview_fits ? "READY TO PRINT" : "TEXT IS TOO LONG");
+    refresh_preview();
+    XuiSetGestureRect(WORKSPACE_X, WORKSPACE_Y, WORKSPACE_WIDTH, WORKSPACE_HEIGHT);
+    XuiClearGesture();
     XuiClearKey();
     XuiShowWindow(main_canvas, 1, 0);
     return 0;
@@ -253,6 +340,9 @@ static void destroy_editor(void)
     if (editor_canvas) XuiShowWindow(editor_canvas, 0, 0);
     destroy(&cancel_button); destroy(&done_button); destroy(&back_button);
     destroy(&space_button); destroy(&mode_button);
+    destroy(&left_button); destroy(&right_button);
+    destroy(&newline_button);
+    destroy(&up_button); destroy(&down_button);
     for (i = 40; i >= 0; --i) destroy(&keys[i]);
     destroy(&next_button);
     for (i = 4; i >= 0; --i) destroy(&candidates[i]);
@@ -284,63 +374,121 @@ static void update_key_mode(void)
     mode_button.pressed.text = mode_text;
     update(&mode_button);
 }
-static void collect_commit(void)
-{
-    const char *text = ime_commit();
-    size_t used = strlen(draft), count = strlen(text);
-    if (count && used + count < sizeof(draft)) memcpy(draft + used, text, count + 1);
-}
 static void append(const char *text)
 {
     size_t used = strlen(draft), count = strlen(text);
-    if (used + count < sizeof(draft)) memcpy(draft + used, text, count + 1);
+    if (!count || used + count >= sizeof(draft)) return;
+    memmove(draft + cursor + count, draft + cursor, used - cursor + 1);
+    memcpy(draft + cursor, text, count);
+    cursor += count;
+}
+static void collect_commit(void)
+{
+    append(ime_commit());
+}
+static void finish_composition(void)
+{
+    if (!ime_buffer()[0] && !ime_bopomofo()[0]) return;
+    if (ime_enter() == 0) collect_commit();
 }
 static void backspace(void)
 {
-    size_t n = strlen(draft);
     if (mode == 0 && (ime_buffer()[0] || ime_bopomofo()[0])) {
         ime_backspace(); collect_commit();
-    } else if (n) {
-        do { --n; } while (n && ((unsigned char)draft[n] & 0xc0) == 0x80);
-        draft[n] = 0;
+    } else if (cursor) {
+        size_t start = previous_char(draft, cursor);
+        memmove(draft + start, draft + cursor, strlen(draft + cursor) + 1);
+        cursor = start;
     }
 }
 static void refresh_editor(void)
 {
-    char display[LINE_BYTES * 3];
+    char before[LINE_BYTES], active[LINE_BYTES * 2], after[LINE_BYTES];
+    char status[48];
     const char *phonetic = mode == 0 ? ime_bopomofo() : "";
-    int i, count = mode == 0 ? ime_candidate_count() : 0, size = 35;
-    int glyph_x;
-    snprintf(display, sizeof(display), "%s%s", draft,
-             mode == 0 ? ime_buffer() : "");
-    XuiCanvasDrawRect(ui_canvas, 20, 118, 440, 145, rgb(255,255,255), 1, 1);
-    while (size > 24 && XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, display) > 350)
-        size -= 3;
-    if (display[0])
-        XuiCanvasDrawText(ui_canvas, 30, 132, size, chinese_font, XUI_TEXT_NORMAL,
-                          rgb(16,16,16), display);
-    else if (!phonetic[0])
-        XuiCanvasDrawText(ui_canvas, 30, 132, size, chinese_font, XUI_TEXT_NORMAL,
-                          rgb(100,100,100), "TYPE HERE");
-    glyph_x = 30 + (display[0] ? XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, display) : 0);
-    while (*phonetic && glyph_x < 420) {
+    int i, count = mode == 0 ? ime_candidate_count() : 0, size = EDIT_FONT_SIZE;
+    int x, y = EDIT_TEXT_Y + 12, width;
+    size_t start = 0, end = 0, line_start, line_end;
+    size_t starts[LINE_BYTES], ends[LINE_BYTES];
+    unsigned row = 0, selected = 0;
+    starts[0] = 0;
+    while (draft[end]) {
+        size_t next = next_char(draft, end);
+        if (draft[end] == '\n') {
+            ends[row++] = end;
+            starts[row] = next;
+        } else if (end > starts[row] &&
+                   draft_width(starts[row], next, label_size) > LABEL_WIDTH - 32) {
+            ends[row++] = end;
+            starts[row] = end;
+        }
+        end = next;
+    }
+    ends[row] = end;
+    while (selected < row && starts[selected + 1] <= cursor) ++selected;
+    upper_row_start = selected > 0 ? starts[selected - 1] : cursor;
+    lower_row_start = selected < row ? starts[selected + 1] : cursor;
+    line_start = starts[selected];
+    line_end = ends[selected];
+    memcpy(before, draft + line_start, cursor - line_start);
+    before[cursor - line_start] = 0;
+    snprintf(active, sizeof(active), "%s", mode == 0 ? ime_buffer() : "");
+    XuiCanvasDrawRect(ui_canvas, 20, EDIT_TEXT_Y, 440, EDIT_HEIGHT,
+                      rgb(255,255,255), 0, 1);
+    while (before[start] &&
+           XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, before + start) >
+               (active[0] ? 310 : 410))
+        start = next_char(before, start);
+    edit_start = line_start + start;
+    width = before[start] ? XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, before + start) : 0;
+    XuiCanvasDrawText(ui_canvas, 30, y + 2, size, chinese_font, XUI_TEXT_NORMAL,
+                      rgb(16,16,16), before + start);
+    x = 30 + width;
+    while (active[0] &&
+           x + XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, active) >
+                          444) {
+        size_t skip = next_char(active, 0);
+        memmove(active, active + skip, strlen(active + skip) + 1);
+    }
+    if (active[0]) {
+        XuiCanvasDrawText(ui_canvas, x, y + 2, size, chinese_font, XUI_TEXT_NORMAL,
+                          rgb(0,105,180), active);
+        x += XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, active);
+    }
+    composition_width = x - 30 - width;
+    XuiCanvasDrawRect(ui_canvas, x, y + 2, 2, 42, rgb(0,105,180), 0, 1);
+    x += 2;
+    end = line_end - cursor;
+    memcpy(after, draft + cursor, end);
+    after[end] = 0;
+    while (end && x + XuiTextWidthEx(chinese_font, size, XUI_TEXT_NORMAL, after) > 450) {
+        end = previous_char(after, end);
+        after[end] = 0;
+    }
+    edit_end = cursor + end;
+    if (after[0])
+        XuiCanvasDrawText(ui_canvas, x, y + 2, size, chinese_font, XUI_TEXT_NORMAL,
+                          rgb(16,16,16), after);
+    x = 30;
+    while (*phonetic && x <= 396) {
         for (i = 0; i < 41; ++i) {
             size_t n = strlen(zhuyin_glyphs[i]);
             if (strncmp(phonetic, zhuyin_glyphs[i], n) == 0) {
-                XuiCanvasDrawImg(ui_canvas, glyph_x, 129, 48, 48,
-                                 XUI_BG_NORMAL, glyphs[i]);
-                glyph_x += 51; phonetic += n;
+                XuiCanvasDrawImg(ui_canvas, x, y + 56, 48, 48, XUI_BG_NORMAL, glyphs[i]);
+                x += 52; phonetic += n;
                 break;
             }
         }
         if (i == 41) ++phonetic;
     }
-    if (mode == 0 && ime_bopomofo()[0])
-        XuiCanvasDrawText(ui_canvas, 30, 208, 25, font, XUI_BOLD,
-                          rgb(70,70,70), "COMPOSING");
+    if (x > 30)
+        XuiCanvasDrawRect(ui_canvas, x, y + 57, 2, 46, rgb(0,105,180), 0, 1);
     XuiCanvasDrawRect(ui_canvas, 20, 270, 440, 38, rgb(47,55,64), 1, 1);
+    snprintf(status, sizeof(status), "%s   LINE %u / %u",
+             mode == 0 ? "ZHUYIN" : mode == 1 ? "ENGLISH" : "NUMBERS",
+             selected + 1, row + 1);
     XuiCanvasDrawText(ui_canvas, 28, 275, 25, font, XUI_BOLD,
-                      rgb(255,255,255), mode == 0 ? "ZHUYIN" : mode == 1 ? "ENGLISH" : "NUMBERS");
+                      rgb(255,255,255), status);
     if (candidate_page * 5 >= count) candidate_page = 0;
     for (i = 0; i < 5; ++i) {
         const char *text = candidate_page * 5 + i < count
@@ -353,10 +501,44 @@ static void refresh_editor(void)
         update(&candidates[i]);
     }
 }
+static void tap_editor(int x, int y)
+{
+    size_t start, end, target, old_cursor;
+    int position, previous_width = 0;
+    if (x < 20 || x >= 460 || y < EDIT_TEXT_Y ||
+        y >= EDIT_TEXT_Y + 64 || ime_bopomofo()[0])
+        return;
+    start = edit_start;
+    end = edit_end;
+    position = x - 30;
+    {
+        int before = draft_width(start, cursor, EDIT_FONT_SIZE);
+        if (position > before) {
+            position -= composition_width + 2;
+            if (position < before) position = before;
+        }
+    }
+    for (target = start; target < end;) {
+        size_t next = next_char(draft, target);
+        int width = draft_width(start, next, EDIT_FONT_SIZE);
+        if (position <= (previous_width + width) / 2) break;
+        target = next;
+        previous_width = width;
+    }
+    old_cursor = cursor;
+    finish_composition();
+    if (target >= old_cursor) target += cursor - old_cursor;
+    cursor = target;
+    candidate_page = 0;
+    refresh_editor();
+}
 static int draw_editor(void)
 {
     int i, row, col, x, y, width;
     snprintf(draft, sizeof(draft), "%s", line);
+    cursor = strlen(draft);
+    XuiSetGestureRect(20, EDIT_TEXT_Y, 440, EDIT_HEIGHT);
+    XuiClearGesture();
     mode = 0; candidate_page = 0; received_touch = 0;
     if (ime_open() < 0) return -1;
     if (editor_canvas) {
@@ -372,7 +554,20 @@ static int draw_editor(void)
     if (!editor_canvas) return -1;
     XuiShowWindow(editor_canvas, 0, 0);
     ui_canvas = editor_canvas;
-    heading("EDIT LABEL", "ZHUYIN  /  ENGLISH  /  NUMBERS");
+    XuiCanvasSetBackground(ui_canvas, XUI_BG_NORMAL, 0, rgb(8,11,15));
+    XuiCanvasDrawText(ui_canvas, 20, 18, 25, font, XUI_BOLD,
+                      rgb(255,255,255), "USE UP OR DOWN TO CHANGE LINE");
+    if (button(&left_button, 20, 214, 65, 48, "<", KEY_LEFT,
+               rgb(255,255,255), rgb(16,16,16), 26) < 0 ||
+        button(&right_button, 93, 214, 65, 48, ">", KEY_RIGHT,
+               rgb(255,255,255), rgb(16,16,16), 26) < 0 ||
+        button(&up_button, 166, 214, 65, 48, "UP", KEY_UP,
+               rgb(255,255,255), rgb(16,16,16), 23) < 0 ||
+        button(&down_button, 239, 214, 90, 48, "DOWN", KEY_DOWN,
+               rgb(255,255,255), rgb(16,16,16), 23) < 0 ||
+        button(&newline_button, 337, 214, 123, 48, "NEW LINE", KEY_NEWLINE,
+               rgb(255,255,255), rgb(16,16,16), 21) < 0)
+        return -1;
     for (i = 0; i < 5; ++i)
         if (button(&candidates[i], 20 + i * 70, 318, 66, 53,
                    candidate_text[i], CAND_FIRST + i, rgb(255,255,255),
@@ -409,7 +604,7 @@ static int draw_editor(void)
 static void finish_editor(int save)
 {
     if (save) {
-        ime_enter(); collect_commit();
+        finish_composition();
         snprintf(line, sizeof(line), "%s", draft);
     }
     XuiShowWindow(editor_canvas, 0, 0);
@@ -440,13 +635,34 @@ static void editor_key(int key)
             ime_choose(index); collect_commit(); candidate_page = 0;
         }
     } else if (key == KEY_NEXT) ++candidate_page;
+    else if (key == KEY_LEFT || key == KEY_RIGHT) {
+        if (!ime_bopomofo()[0]) {
+            finish_composition();
+            cursor = key == KEY_LEFT ? previous_char(draft, cursor) : next_char(draft, cursor);
+            candidate_page = 0;
+        }
+    } else if (key == KEY_UP || key == KEY_DOWN) {
+        if (!ime_bopomofo()[0]) {
+            size_t target = key == KEY_UP ? upper_row_start : lower_row_start;
+            size_t old_cursor = cursor;
+            finish_composition();
+            cursor = target + (target >= old_cursor ? cursor - old_cursor : 0);
+            candidate_page = 0;
+        }
+    } else if (key == KEY_NEWLINE) {
+        if (!ime_bopomofo()[0]) {
+            finish_composition();
+            append("\n");
+            candidate_page = 0;
+        }
+    }
     else if (key == KEY_BACK || key == XUI_KEYCLEAR) backspace();
     else if (key == KEY_SPACE) {
         if (mode == 0) { ime_space(); collect_commit(); }
         else append(" ");
         candidate_page = 0;
     } else if (key == KEY_MODE) {
-        if (mode == 0) { ime_enter(); collect_commit(); }
+        if (mode == 0) finish_composition();
         mode = (mode + 1) % 3; candidate_page = 0;
         update_key_mode();
     }
@@ -464,17 +680,32 @@ int app_main(int argc, char **argv)
     if (!screen || !font || !chinese_font || load_glyphs() < 0) goto cleanup;
     if (draw_main() < 0) goto cleanup;
     while (XuiIsRunning()) {
-        if (!XuiHasKey()) { usleep(12000); continue; }
-        key = XuiGetKey();
-        if (editing) { editor_key(key); continue; }
-        if (key == KEY_EXIT || key == XUI_KEYCANCEL) { result = 0; break; }
-        if (key == KEY_PRINT) { print_label(); continue; }
-        if (key == KEY_FIELD) {
+        XuiGesture gesture;
+        int has_gesture = XuiGetGesture(&gesture) > 0;
+        if (has_gesture && editing && is_tap(&gesture)) {
+            tap_editor(gesture.cur_x, gesture.cur_y);
+            continue;
+        }
+        if (has_gesture && !editing && is_tap(&gesture)) {
+            if (gesture.down_x < WORKSPACE_X || gesture.down_x >= WORKSPACE_X + WORKSPACE_WIDTH ||
+                gesture.down_y < WORKSPACE_Y || gesture.down_y >= WORKSPACE_Y + WORKSPACE_HEIGHT)
+                continue;
             XuiShowWindow(main_canvas, 0, 0);
             if (draw_editor() < 0) {
                 destroy_editor(); ime_close(); editing = 0;
                 draw_main(); message("KEYBOARD UNAVAILABLE");
             }
+            continue;
+        }
+        if (!XuiHasKey()) { usleep(12000); continue; }
+        key = XuiGetKey();
+        if (editing) { editor_key(key); continue; }
+        if (key == KEY_EXIT || key == XUI_KEYCANCEL) { result = 0; break; }
+        if (key == KEY_PRINT) { print_label(); continue; }
+        if (key == KEY_SMALLER || key == KEY_LARGER) {
+            label_size = clamp(label_size + (key == KEY_SMALLER ? -4 : 4), MIN_LABEL_SIZE, 54);
+            refresh_preview();
+            continue;
         }
     }
 cleanup:

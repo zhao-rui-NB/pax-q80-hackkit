@@ -221,6 +221,7 @@ int XuiGetHzString(XuiImeAttr attr, char *outstr, unsigned int maxlen, unsigned 
 int XuiGetString(XuiGetStrAttr attr, char *outstr, unsigned char mode, int minlen, int maxlen);
 char *XuiBidiStrdup(const char *str);
 int XuiGetGesture(XuiGesture *gesture);
+void XuiClearGesture(void);
 int XuiSetGestureRect(unsigned int x, unsigned int y, unsigned int width, unsigned int height);
 int XuiShowSoftKeyboard(int type, int show);
 // XuiTsUpdate
