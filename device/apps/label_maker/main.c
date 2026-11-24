@@ -17,6 +17,9 @@
 #define LABEL_TEXT_WIDTH (LABEL_WIDTH - 2 * LABEL_MARGIN)
 #define XUI_RASTER_SIZE 120
 #define PRINT_BAND 240
+#define PRINTER_BUFFER_ROWS 5000
+#define PRINT_TAIL_DOTS 48
+#define PRINT_JOB_ROWS (PRINTER_BUFFER_ROWS - PRINT_TAIL_DOTS)
 #define MANUAL_FEED_DOTS 96
 #define LABEL_ROW_BYTES (LABEL_WIDTH / 8)
 #define MIN_LABEL_SIZE 14
@@ -513,7 +516,7 @@ static int preview_gesture(const XuiGesture *gesture)
     return key == toolbar_key(gesture->cur_x, gesture->cur_y) ? key : 0;
 }
 
-static int print_band(int start, int rows)
+static void queue_print_band(int start, int rows)
 {
     unsigned char packet[1 + PRINT_BAND * (2 + LABEL_ROW_BYTES)];
     int row, index = 1;
@@ -525,13 +528,7 @@ static int print_band(int start, int rows)
                LABEL_ROW_BYTES);
         index += LABEL_ROW_BYTES;
     }
-    OsPrnClrBuf();
-    OsPrnSetGray(4);
-    OsPrnSetIndent(0, 0);
-    OsPrnSetSpace(0, 0);
     OsPrnPutImage(packet);
-    if (start + rows == paper_length) OsPrnFeed(48);
-    return OsPrnStart();
 }
 
 static void print_label(void)
@@ -546,10 +543,21 @@ static void print_label(void)
 
     result = OsPrnOpen(PRN_REAL, NULL);
     if (result == 0) {
-        for (start = 0; start < paper_length && result == 0; start += PRINT_BAND) {
+        for (start = 0; start < paper_length && result == 0;) {
+            int end = start + clamp(paper_length - start, 1, PRINT_JOB_ROWS);
             result = OsPrnCheck();
-            if (result == 0)
-                result = print_band(start, clamp(paper_length - start, 1, PRINT_BAND));
+            if (result != 0) break;
+            OsPrnClrBuf();
+            OsPrnSetGray(4);
+            OsPrnSetIndent(0, 0);
+            OsPrnSetSpace(0, 0);
+            while (start < end) {
+                int rows = clamp(end - start, 1, PRINT_BAND);
+                queue_print_band(start, rows);
+                start += rows;
+            }
+            if (start == paper_length) OsPrnFeed(PRINT_TAIL_DOTS);
+            result = OsPrnStart();
         }
         OsPrnClose();
     }

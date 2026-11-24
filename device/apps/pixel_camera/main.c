@@ -367,21 +367,22 @@ static void print_photo(void)
     status("PRINTING");
     result = OsPrnOpen(PRN_REAL, NULL);
     if (result == RET_OK) {
-        while (start < print_height && (result = OsPrnCheck()) == RET_OK) {
-            int chunk;
+        result = OsPrnCheck();
+        if (result == RET_OK) {
             OsPrnClrBuf();
             OsPrnSetGray(print_density);
             OsPrnSetIndent(0, 0);
             OsPrnSetSpace(0, 0);
-            for (chunk = 0; chunk < 2 && start < print_height; ++chunk) {
+            /* Packets append to one print buffer. Start the paper only after
+             * the whole photo is queued, so the motor does not stop midway. */
+            while (start < print_height) {
                 int rows = print_height - start;
                 if (rows > CHUNK_HEIGHT) rows = CHUNK_HEIGHT;
                 queue_image_chunk(start, rows);
                 start += rows;
             }
-            if (start == print_height) OsPrnFeed(48);
+            OsPrnFeed(48);
             result = OsPrnStart();
-            if (result != RET_OK) break;
         }
         OsPrnClose();
     }

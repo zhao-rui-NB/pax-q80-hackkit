@@ -1,4 +1,4 @@
 id = "label_maker"
 name = "Label Maker"
-version = "0.9.4"
+version = "0.9.5"
 libraries = ["osal", "xui"]
